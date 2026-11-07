@@ -14,6 +14,7 @@ import {
   Trash2,
   HardDriveDownload,
   HardDriveUpload,
+  Layers,
 } from 'lucide-react';
 import {
   Chapter,
@@ -28,11 +29,18 @@ import {
   ThinkingLevelOption,
 } from '@/lib/types';
 import {
+  ExportContentLanguage,
   generateEpub33Blob,
   generateMergedTxtBlob,
+  generateNotebookLmExport,
   generatePrefixedTxtZipBlob,
   generateProjectBackupZipV5,
+  NotebookLmMode,
+  OutputEncoding,
   parseProjectBackupZipV5,
+  planNotebookLmOutputs,
+  safeFilename,
+  TitleSource,
 } from '@/lib/file-engine';
 import { scanChapterQA } from '@/lib/qa-scanner';
 import { safeFetchJson } from '@/lib/logger';
@@ -87,9 +95,17 @@ export default function ExportModal({
   onRestoreBackupProject,
 }: ExportModalProps) {
   const [activeTab, setActiveTab] = useState<'ebook' | 'backup_v5'>('ebook');
-  const [format, setFormat] = useState<'epub33' | 'zip_txt' | 'merged_txt'>('epub33');
+  const [format, setFormat] = useState<
+    'epub33' | 'notebooklm' | 'zip_txt' | 'merged_txt'
+  >('epub33');
   const [scope, setScope] = useState<'all' | 'translated' | 'ticked'>('all');
-  const [mode, setMode] = useState<'vi_only' | 'bilingual'>('vi_only');
+  const [mode, setMode] = useState<ExportContentLanguage>('vi_only');
+  const [titleSource, setTitleSource] = useState<TitleSource>('auto');
+  const [outputEncoding, setOutputEncoding] = useState<OutputEncoding>('utf-8');
+  const [notebookMode, setNotebookMode] = useState<NotebookLmMode>('chunks');
+  const [chunkSize, setChunkSize] = useState<number>(50);
+  const [rangeStart, setRangeStart] = useState<string>('');
+  const [rangeEnd, setRangeEnd] = useState<string>('');
   const [exporting, setExporting] = useState(false);
   const [translatingTitles, setTranslatingTitles] = useState(false);
   const [restoringBackup, setRestoringBackup] = useState(false);
@@ -98,29 +114,81 @@ export default function ExportModal({
   const coverInputRef = useRef<HTMLInputElement | null>(null);
   const backupInputRef = useRef<HTMLInputElement | null>(null);
 
+  const hasRangeFilter = Boolean(rangeStart.trim() || rangeEnd.trim());
+
   const targetChapters = useMemo(() => {
+    let baseList = chapters;
     if (scope === 'ticked') {
-      return chapters.filter((c) => selectedChapterIds.has(c.id));
-    }
-    if (scope === 'translated') {
-      return chapters.filter(
+      baseList = chapters.filter((c) => selectedChapterIds.has(c.id));
+    } else if (scope === 'translated') {
+      baseList = chapters.filter(
         (c) =>
           c.status === 'translated' ||
           c.status === 'edited' ||
           Boolean(c.translatedContent.trim())
       );
     }
-    return chapters;
-  }, [chapters, scope, selectedChapterIds]);
+
+    const startNum =
+      rangeStart.trim() !== '' ? parseInt(rangeStart.trim(), 10) : null;
+    const endNum =
+      rangeEnd.trim() !== '' ? parseInt(rangeEnd.trim(), 10) : null;
+
+    if (
+      (startNum !== null && !Number.isNaN(startNum)) ||
+      (endNum !== null && !Number.isNaN(endNum))
+    ) {
+      baseList = baseList.filter((c) => {
+        if (startNum !== null && !Number.isNaN(startNum) && c.chapterNumber < startNum) {
+          return false;
+        }
+        if (endNum !== null && !Number.isNaN(endNum) && c.chapterNumber > endNum) {
+          return false;
+        }
+        return true;
+      });
+    }
+
+    return baseList;
+  }, [chapters, scope, selectedChapterIds, rangeStart, rangeEnd]);
+
+  const notebookLmPreviewPlans = useMemo(() => {
+    if (format !== 'notebooklm' || targetChapters.length === 0) return [];
+    const bookName =
+      mode === 'raw_only' && novel.originalTitle
+        ? novel.originalTitle
+        : novel.title;
+    return planNotebookLmOutputs(targetChapters, {
+      bookTitle: bookName,
+      mode: notebookMode,
+      chunkSize: Math.max(1, chunkSize || 50),
+      contentLanguage: mode,
+      titleSource,
+      outputEncoding,
+      hasRangeFilter,
+    });
+  }, [
+    format,
+    targetChapters,
+    mode,
+    novel.originalTitle,
+    novel.title,
+    notebookMode,
+    chunkSize,
+    titleSource,
+    outputEncoding,
+    hasRangeFilter,
+  ]);
 
   const chaptersMissingViTitle = useMemo(() => {
+    if (mode === 'raw_only') return [];
     return targetChapters.filter(
       (c) =>
         !c.titleTranslated.trim() ||
         c.titleTranslated.trim() === c.titleRaw.trim() ||
         CJK_CHECK.test(c.titleTranslated)
     );
-  }, [targetChapters]);
+  }, [targetChapters, mode]);
 
   if (!isOpen) return null;
 
@@ -229,23 +297,51 @@ export default function ExportModal({
   const handleDownloadExport = async () => {
     if (targetChapters.length === 0) return;
     setExporting(true);
-    setStatusMessage('Đang đóng gói sách chuẩn...');
+    setStatusMessage('Đang đóng gói tệp xuất bản...');
     try {
-      const safeBookName = novel.title
-        .replace(/[\\/:*?"<>|]/g, '-')
-        .replace(/\s+/g, '_');
+      const displayBookTitle =
+        mode === 'raw_only' && novel.originalTitle
+          ? novel.originalTitle
+          : novel.title;
+      const safeBookName = safeFilename(displayBookTitle);
 
       let blob: Blob;
       let fileName: string;
 
       if (format === 'epub33') {
-        blob = await generateEpub33Blob(novel, targetChapters, mode);
-        fileName = `${safeBookName}_EPUB3.3.epub`;
+        blob = await generateEpub33Blob(novel, targetChapters, mode, {
+          titleSource,
+          language: mode === 'raw_only' ? 'zh-CN' : 'vi',
+        });
+        fileName = `${safeBookName}.epub`;
+      } else if (format === 'notebooklm') {
+        const res = await generateNotebookLmExport(targetChapters, {
+          bookTitle: displayBookTitle,
+          mode: notebookMode,
+          chunkSize: Math.max(1, chunkSize || 50),
+          contentLanguage: mode,
+          titleSource,
+          outputEncoding,
+          hasRangeFilter,
+        });
+        blob = res.blob;
+        fileName = res.filename;
       } else if (format === 'zip_txt') {
-        blob = await generatePrefixedTxtZipBlob(targetChapters, mode);
+        blob = await generatePrefixedTxtZipBlob(
+          targetChapters,
+          mode,
+          outputEncoding,
+          titleSource
+        );
         fileName = `${safeBookName}_Chapters_TXT.zip`;
       } else {
-        blob = generateMergedTxtBlob(novel, targetChapters, mode);
+        blob = generateMergedTxtBlob(
+          novel,
+          targetChapters,
+          mode,
+          outputEncoding,
+          titleSource
+        );
         fileName = `${safeBookName}_Full.txt`;
       }
 
@@ -317,7 +413,7 @@ export default function ExportModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
-      <div className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-[#E5DEC9] bg-[#FBF8F1] shadow-2xl">
+      <div className="flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-[#E5DEC9] bg-[#FBF8F1] shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-[#E5DEC9] bg-[#F3EFE6] px-6 py-4">
           <div className="flex items-center gap-3">
@@ -326,10 +422,10 @@ export default function ExportModal({
             </div>
             <div>
               <h2 className="font-serif text-lg font-bold text-[#1C1917]">
-                Xuất Bản Ebook W3C EPUB 3.3 (Có Bìa Sách) &amp; Sao Lưu Dự Án (.ZIP v5)
+                Xuất Bản Ebook EPUB 3.3 + NCX, Gộp Nguồn NotebookLM &amp; Sao Lưu (.ZIP v5)
               </h2>
               <p className="text-xs text-[#605A52]">
-                Đóng gói EPUB 3.3 kèm ảnh bìa chuẩn, hoặc sao lưu &amp; phục hồi toàn bộ dự án
+                Đóng gói EPUB chuẩn (Mục lục kép nav.xhtml + toc.ncx), chia gói 50 chương cho NotebookLM, hoặc sao lưu dự án
               </p>
             </div>
           </div>
@@ -352,7 +448,7 @@ export default function ExportModal({
             }`}
           >
             <BookOpen className="h-4 w-4" />
-            1. Xuất Bản EPUB 3.3, Ảnh Bìa &amp; Kho .TXT
+            1. Xuất Bản EPUB 3.3, Gộp Nguồn NotebookLM &amp; Kho .TXT
           </button>
           <button
             onClick={() => setActiveTab('backup_v5')}
@@ -376,7 +472,7 @@ export default function ExportModal({
                 <label className="mb-2 block text-xs font-bold tracking-wider text-[#605A52] uppercase">
                   1. Chọn định dạng tệp xuất bản
                 </label>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                   <div
                     onClick={() => setFormat('epub33')}
                     className={`cursor-pointer rounded-xl border p-3.5 transition ${
@@ -387,10 +483,27 @@ export default function ExportModal({
                   >
                     <BookOpen className="h-5 w-5 text-[#8C2D19]" />
                     <h4 className="mt-2 text-xs font-bold text-[#1C1917]">
-                      Ebook W3C EPUB 3.3 (.epub)
+                      Ebook EPUB 3.3 + NCX (.epub)
                     </h4>
                     <p className="mt-1 text-[11px] text-[#605A52]">
-                      Chuẩn Apple Books, Kindle, Kobo với ảnh bìa cover.xhtml, TOC &amp; CSS Justify.
+                      Chuẩn Apple Books, Kindle, Kobo với ảnh bìa, Mục lục kép nav.xhtml + toc.ncx &amp; chống lặp số 1. 第1章.
+                    </p>
+                  </div>
+
+                  <div
+                    onClick={() => setFormat('notebooklm')}
+                    className={`cursor-pointer rounded-xl border p-3.5 transition ${
+                      format === 'notebooklm'
+                        ? 'border-[#8C2D19] bg-[#8C2D19]/8'
+                        : 'border-[#E5DEC9] bg-white hover:border-[#C9B99A]'
+                    }`}
+                  >
+                    <Layers className="h-5 w-5 text-[#8C2D19]" />
+                    <h4 className="mt-2 text-xs font-bold text-[#1C1917]">
+                      Gộp Nguồn NotebookLM (.zip/.txt)
+                    </h4>
+                    <p className="mt-1 text-[11px] text-[#605A52]">
+                      Chia gói N chương (ví dụ 50 chương/file TênTruyện[0-49].txt) kèm file TXT tổng cho NotebookLM / AI.
                     </p>
                   </div>
 
@@ -407,7 +520,7 @@ export default function ExportModal({
                       Gói .ZIP từng chương .TXT
                     </h4>
                     <p className="mt-1 text-[11px] text-[#605A52]">
-                      Giữ nguyên tên tệp XXXX_Chương X - Tiêu đề.txt đúng thứ tự gốc.
+                      Giữ nguyên tên tệp XXXX_Tiêu đề.txt đúng thứ tự gốc.
                     </p>
                   </div>
 
@@ -421,7 +534,7 @@ export default function ExportModal({
                   >
                     <FileText className="h-5 w-5 text-[#8C2D19]" />
                     <h4 className="mt-2 text-xs font-bold text-[#1C1917]">
-                      Tệp .TXT Gộp Toàn Bộ
+                      1 Tệp .TXT Gộp Toàn Bộ
                     </h4>
                     <p className="mt-1 text-[11px] text-[#605A52]">
                       Gộp tất cả các chương đã chọn vào 1 tệp .TXT duy nhất.
@@ -430,69 +543,153 @@ export default function ExportModal({
                 </div>
               </div>
 
-              {/* EPUB Cover Image Upload & Preview */}
-              <div className="rounded-xl border border-[#E5DEC9] bg-white p-4">
-                <div className="flex flex-wrap items-center justify-between gap-4">
-                  <div className="flex items-center gap-3.5">
-                    {novel.coverDataBase64 ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={novel.coverDataBase64}
-                        alt="EPUB Cover"
-                        className="h-20 w-14 rounded-md border border-[#C9B99A] object-cover shadow-xs"
-                      />
-                    ) : (
-                      <div className="flex h-20 w-14 flex-col items-center justify-center rounded-md border border-dashed border-[#C9B99A] bg-[#FBF8F1] text-[10px] text-[#605A52]">
-                        <span>Chưa có</span>
-                        <span>Bìa sách</span>
+              {/* NotebookLM Chunking Configuration */}
+              {format === 'notebooklm' && (
+                <div className="rounded-xl border border-[#C9B99A] bg-white p-4 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h4 className="text-xs font-bold text-[#8C2D19]">
+                      Cấu hình Chia Gói Nguồn Cho NotebookLM / LLM
+                    </h4>
+                    <span className="font-mono text-[11px] text-[#605A52]">
+                      Sẽ tạo {notebookLmPreviewPlans.length} tệp TXT
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    <div className="sm:col-span-2">
+                      <label className="mb-1 block text-xs font-semibold text-[#1C1917]">
+                        Chế độ đóng gói:
+                      </label>
+                      <select
+                        value={notebookMode}
+                        onChange={(e) =>
+                          setNotebookMode(e.target.value as NotebookLmMode)
+                        }
+                        className="w-full rounded-lg border border-[#E5DEC9] bg-[#FBF8F1] px-3 py-2 text-xs text-[#1C1917]"
+                      >
+                        <option value="chunks">
+                          Chỉ chia gói N chương (TênTruyện[0-49].txt → .ZIP)
+                        </option>
+                        <option value="both">
+                          Cả file TXT tổng + các gói N chương (.ZIP)
+                        </option>
+                        <option value="big">
+                          Chỉ 1 file TXT gộp toàn bộ (.TXT)
+                        </option>
+                      </select>
+                    </div>
+
+                    {notebookMode !== 'big' && (
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold text-[#1C1917]">
+                          Số chương mỗi gói:
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={2000}
+                          value={chunkSize}
+                          onChange={(e) =>
+                            setChunkSize(
+                              Math.max(1, parseInt(e.target.value, 10) || 50)
+                            )
+                          }
+                          className="w-full rounded-lg border border-[#E5DEC9] bg-[#FBF8F1] px-3 py-2 font-mono text-xs text-[#1C1917]"
+                        />
                       </div>
                     )}
-                    <div>
-                      <h4 className="text-xs font-bold text-[#1C1917]">
-                        Ảnh Bìa Sách EPUB (Cover Image — Lưu bền vững theo dự án)
-                      </h4>
-                      <p className="mt-0.5 text-[11px] text-[#605A52]">
-                        Ảnh bìa (.JPG / .PNG) sẽ được nhúng vào trang đầu tiên{' '}
-                        <code className="font-mono text-[#8C2D19]">OEBPS/cover.xhtml</code> và đính kèm trong gói sao lưu .ZIP v5.
-                      </p>
-                      {novel.coverFileName && (
-                        <p className="mt-1 font-mono text-[11px] font-semibold text-[#1E6F50]">
-                          Đang dùng: {novel.coverFileName}
+                  </div>
+
+                  {notebookLmPreviewPlans.length > 0 && (
+                    <div className="rounded-lg border border-[#E5DEC9] bg-[#FBF8F1] p-2.5 text-[11px] text-[#605A52]">
+                      <div className="font-semibold text-[#1C1917] mb-1">
+                        Xem trước danh sách tệp trong gói xuất ({notebookLmPreviewPlans.length} tệp):
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+                        {notebookLmPreviewPlans.slice(0, 30).map((p, i) => (
+                          <span
+                            key={i}
+                            className="rounded border border-[#E5DEC9] bg-white px-2 py-0.5 font-mono text-[11px] text-[#8C2D19]"
+                          >
+                            {p.filename} ({p.chapters.length} ch)
+                          </span>
+                        ))}
+                        {notebookLmPreviewPlans.length > 30 && (
+                          <span className="px-1 py-0.5 text-[11px]">
+                            … và {notebookLmPreviewPlans.length - 30} tệp nữa
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* EPUB Cover Image Upload & Preview */}
+              {format === 'epub33' && (
+                <div className="rounded-xl border border-[#E5DEC9] bg-white p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-4">
+                    <div className="flex items-center gap-3.5">
+                      {novel.coverDataBase64 ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={novel.coverDataBase64}
+                          alt="EPUB Cover"
+                          className="h-20 w-14 rounded-md border border-[#C9B99A] object-cover shadow-xs"
+                        />
+                      ) : (
+                        <div className="flex h-20 w-14 flex-col items-center justify-center rounded-md border border-dashed border-[#C9B99A] bg-[#FBF8F1] text-[10px] text-[#605A52]">
+                          <span>Chưa có</span>
+                          <span>Bìa sách</span>
+                        </div>
+                      )}
+                      <div>
+                        <h4 className="text-xs font-bold text-[#1C1917]">
+                          Ảnh Bìa Sách EPUB (Cover Image — Lưu bền vững theo dự án)
+                        </h4>
+                        <p className="mt-0.5 text-[11px] text-[#605A52]">
+                          Ảnh bìa (.JPG / .PNG) sẽ được nhúng vào trang đầu tiên{' '}
+                          <code className="font-mono text-[#8C2D19]">OEBPS/cover.xhtml</code> và đính kèm trong gói sao lưu .ZIP v5.
                         </p>
+                        {novel.coverFileName && (
+                          <p className="mt-1 font-mono text-[11px] font-semibold text-[#1E6F50]">
+                            Đang dùng: {novel.coverFileName}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <input
+                        ref={coverInputRef}
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        onChange={handleUploadCoverImage}
+                        className="hidden"
+                      />
+                      <button
+                        onClick={() => coverInputRef.current?.click()}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[#C9B99A] bg-[#FBF8F1] px-3 py-1.5 text-xs font-semibold text-[#1C1917] hover:bg-[#F3EFE6]"
+                      >
+                        <ImagePlus className="h-3.5 w-3.5 text-[#8C2D19]" />
+                        {novel.coverDataBase64 ? 'Đổi ảnh bìa' : 'Tải ảnh bìa lên'}
+                      </button>
+                      {novel.coverDataBase64 && (
+                        <button
+                          onClick={handleRemoveCoverImage}
+                          className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          Gỡ bìa
+                        </button>
                       )}
                     </div>
                   </div>
-
-                  <div className="flex items-center gap-2">
-                    <input
-                      ref={coverInputRef}
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp"
-                      onChange={handleUploadCoverImage}
-                      className="hidden"
-                    />
-                    <button
-                      onClick={() => coverInputRef.current?.click()}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-[#C9B99A] bg-[#FBF8F1] px-3 py-1.5 text-xs font-semibold text-[#1C1917] hover:bg-[#F3EFE6]"
-                    >
-                      <ImagePlus className="h-3.5 w-3.5 text-[#8C2D19]" />
-                      {novel.coverDataBase64 ? 'Đổi ảnh bìa' : 'Tải ảnh bìa lên'}
-                    </button>
-                    {novel.coverDataBase64 && (
-                      <button
-                        onClick={handleRemoveCoverImage}
-                        className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        Gỡ bìa
-                      </button>
-                    )}
-                  </div>
                 </div>
-              </div>
+              )}
 
-              {/* Scope & Language Mode */}
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {/* Scope, Range, Language Mode, Title Source & Encoding */}
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <div>
                   <label className="mb-1.5 block text-xs font-bold text-[#1C1917]">
                     2. Phạm vi chương cần xuất
@@ -520,55 +717,131 @@ export default function ExportModal({
 
                 <div>
                   <label className="mb-1.5 block text-xs font-bold text-[#1C1917]">
-                    3. Chế độ trình bày ngôn ngữ
+                    3. Khoảng số thứ tự chương (Tùy chọn)
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={0}
+                      value={rangeStart}
+                      onChange={(e) => setRangeStart(e.target.value)}
+                      placeholder="Từ (VD: 0)"
+                      className="w-full rounded-lg border border-[#E5DEC9] bg-white px-2.5 py-2 font-mono text-xs text-[#1C1917]"
+                    />
+                    <span className="text-xs text-[#605A52]">→</span>
+                    <input
+                      type="number"
+                      min={0}
+                      value={rangeEnd}
+                      onChange={(e) => setRangeEnd(e.target.value)}
+                      placeholder="Đến (VD: 99)"
+                      className="w-full rounded-lg border border-[#E5DEC9] bg-white px-2.5 py-2 font-mono text-xs text-[#1C1917]"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-xs font-bold text-[#1C1917]">
+                    4. Ngôn ngữ nội dung xuất
                   </label>
                   <select
                     value={mode}
-                    onChange={(e) => setMode(e.target.value as 'vi_only' | 'bilingual')}
+                    onChange={(e) => setMode(e.target.value as ExportContentLanguage)}
                     className="w-full rounded-lg border border-[#E5DEC9] bg-white px-3 py-2 text-xs text-[#1C1917]"
                   >
-                    <option value="vi_only">Thuần Tiếng Việt (Chuẩn đọc truyện)</option>
+                    <option value="vi_only">
+                      Thuần Tiếng Việt (Bản dịch — Mặc định)
+                    </option>
+                    <option value="raw_only">
+                      Nguyên tác Tiếng Trung (Raw — Cho NotebookLM / Đọc Raw)
+                    </option>
                     <option value="bilingual">
                       Song ngữ Trung - Việt (Đối chiếu từng đoạn)
                     </option>
                   </select>
                 </div>
-              </div>
 
-              {/* Chapter Title Translation Verification Card */}
-              <div className="rounded-xl border border-[#E5DEC9] bg-white p-4">
-                {chaptersMissingViTitle.length > 0 ? (
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-start gap-2.5">
-                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[#B45309]" />
-                      <div>
-                        <h4 className="text-xs font-bold text-[#B45309]">
-                          Phát hiện {chaptersMissingViTitle.length}/
-                          {targetChapters.length} chương chưa dịch tiêu đề sang tiếng Việt
-                        </h4>
-                        <p className="mt-0.5 text-[11px] text-[#605A52]">
-                          Bạn có thể bấm nút bên cạnh để AI dịch sạch 100% tiêu đề chương trước khi đóng gói Mục lục EPUB.
-                        </p>
-                      </div>
-                    </div>
-                    <button
-                      onClick={handleTranslateAllMissingTitles}
-                      disabled={translatingTitles}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-[#B45309] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#92400E] disabled:opacity-50"
+                <div>
+                  <label className="mb-1.5 block text-xs font-bold text-[#1C1917]">
+                    5. Nguồn tiêu đề chương
+                  </label>
+                  <select
+                    value={titleSource}
+                    onChange={(e) => setTitleSource(e.target.value as TitleSource)}
+                    className="w-full rounded-lg border border-[#E5DEC9] bg-white px-3 py-2 text-xs text-[#1C1917]"
+                  >
+                    <option value="auto">
+                      Tự động (Khử dòng tiêu đề lặp ở đầu chương)
+                    </option>
+                    <option value="saved">Luôn dùng tiêu đề chương đã lưu</option>
+                    <option value="first-line">
+                      Lấy dòng đầu tiên trong nội dung chương
+                    </option>
+                  </select>
+                </div>
+
+                {format !== 'epub33' && (
+                  <div className="sm:col-span-2">
+                    <label className="mb-1.5 block text-xs font-bold text-[#1C1917]">
+                      6. Bảng mã xuất tệp .TXT (Encoding)
+                    </label>
+                    <select
+                      value={outputEncoding}
+                      onChange={(e) =>
+                        setOutputEncoding(e.target.value as OutputEncoding)
+                      }
+                      className="w-full rounded-lg border border-[#E5DEC9] bg-white px-3 py-2 text-xs text-[#1C1917]"
                     >
-                      <Sparkles className="h-3.5 w-3.5" />
-                      {translatingTitles
-                        ? 'Đang dịch tiêu đề...'
-                        : `AI Dịch ${chaptersMissingViTitle.length} Tiêu Đề Ngay`}
-                    </button>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2 text-xs font-semibold text-[#1E6F50]">
-                    <CheckCircle2 className="h-4 w-4" />
-                    100% Tiêu đề chương trong danh sách xuất đã được dịch sang tiếng Việt!
+                      <option value="utf-8">
+                        UTF-8 (Chuẩn khuyến nghị cho NotebookLM, Web &amp; Điện thoại)
+                      </option>
+                      <option value="utf-8-sig">
+                        UTF-8 có BOM (utf-8-sig — Tương thích Notepad Windows cũ)
+                      </option>
+                      <option value="utf-16le">
+                        UTF-16LE (có BOM)
+                      </option>
+                    </select>
                   </div>
                 )}
               </div>
+
+              {/* Chapter Title Translation Verification Card */}
+              {mode !== 'raw_only' && (
+                <div className="rounded-xl border border-[#E5DEC9] bg-white p-4">
+                  {chaptersMissingViTitle.length > 0 ? (
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-start gap-2.5">
+                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[#B45309]" />
+                        <div>
+                          <h4 className="text-xs font-bold text-[#B45309]">
+                            Phát hiện {chaptersMissingViTitle.length}/
+                            {targetChapters.length} chương chưa dịch tiêu đề sang tiếng Việt
+                          </h4>
+                          <p className="mt-0.5 text-[11px] text-[#605A52]">
+                            Bạn có thể bấm nút bên cạnh để AI dịch sạch 100% tiêu đề chương trước khi đóng gói Mục lục.
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={handleTranslateAllMissingTitles}
+                        disabled={translatingTitles}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-[#B45309] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#92400E] disabled:opacity-50"
+                      >
+                        <Sparkles className="h-3.5 w-3.5" />
+                        {translatingTitles
+                          ? 'Đang dịch tiêu đề...'
+                          : `AI Dịch ${chaptersMissingViTitle.length} Tiêu Đề Ngay`}
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 text-xs font-semibold text-[#1E6F50]">
+                      <CheckCircle2 className="h-4 w-4" />
+                      100% Tiêu đề chương trong danh sách xuất đã được dịch sang tiếng Việt!
+                    </div>
+                  )}
+                </div>
+              )}
             </>
           ) : (
             /* TAB 2: PROJECT BACKUP & RESTORE (.ZIP BACKUP V5) */
@@ -661,6 +934,12 @@ export default function ExportModal({
             {activeTab === 'ebook' ? (
               <>
                 Số chương sẽ xuất: <strong>{targetChapters.length}</strong> chương
+                {format === 'notebooklm' && notebookLmPreviewPlans.length > 0 && (
+                  <>
+                    {' '}
+                    · Chia thành <strong>{notebookLmPreviewPlans.length}</strong> tệp
+                  </>
+                )}
               </>
             ) : (
               <>Định dạng sao lưu chuẩn: Mặc Hương Các Backup Schema v5.0</>

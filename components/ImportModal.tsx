@@ -11,13 +11,23 @@ import {
   AlertTriangle,
   Sparkles,
   Upload,
+  Download,
+  FileArchive,
+  Wand2,
+  Code2,
+  Eye,
 } from 'lucide-react';
 import { Chapter } from '@/lib/types';
 import {
   cleanRawChapterBody,
-  decodeChineseTextBuffer,
+  decodeTextWithEncoding,
+  generateSplitChaptersZipBlob,
+  getSmartSplitSampleText,
+  InputEncoding,
   parseEpubFile,
-  parseFolderTxtFiles,
+  parseFolderOrZipTxtFiles,
+  safeFilename,
+  splitChaptersSmart,
   splitMergedTxtByRegex,
 } from '@/lib/file-engine';
 import { REGEX_SPLIT_PRESETS } from '@/lib/seed-data';
@@ -48,20 +58,35 @@ export default function ImportModal({
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Tab 1: Folder / Multiple TXT files (XXXX_Title.txt)
+  // Shared Input Encoding for TXT / ZIP
+  const [inputEncoding, setInputEncoding] = useState<InputEncoding>('auto');
+
+  // Tab 1: Folder / Multiple TXT / ZIP files (XXXX_Title.txt)
   const [folderParsedChapters, setFolderParsedChapters] = useState<Chapter[]>([]);
+  const [folderWarnings, setFolderWarnings] = useState<string[]>([]);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const multiFilesInputRef = useRef<HTMLInputElement | null>(null);
+  const zipFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Tab 2: EPUB
   const [epubParsedChapters, setEpubParsedChapters] = useState<Chapter[]>([]);
   const [epubMeta, setEpubMeta] = useState<{ title?: string; author?: string }>({});
 
-  // Tab 3: Single Merged TXT with Custom Regex
+  // Tab 3: Single Merged TXT (Smart Splitter OR Custom Regex)
+  const [splitEngineMode, setSplitEngineMode] = useState<'smart' | 'regex'>('smart');
   const [mergedRawText, setMergedRawText] = useState('');
   const [mergedFileName, setMergedFileName] = useState('');
+  const [mergedFileBuffer, setMergedFileBuffer] = useState<ArrayBuffer | null>(null);
   const [customRegex, setCustomRegex] = useState(REGEX_SPLIT_PRESETS[0].pattern);
-  const [startOrderNumber, setStartOrderNumber] = useState(existingChapterCount + 1);
+  const [startOrderNumber, setStartOrderNumber] = useState(
+    existingChapterCount > 0 ? existingChapterCount + 1 : 0
+  );
+  const [smartDigits, setSmartDigits] = useState(4);
+  const [smartIncludePrologue, setSmartIncludePrologue] = useState(true);
+  const [smartPrologueTitle, setSmartPrologueTitle] = useState('Lời mở đầu');
+  const [smartRemoveTitleLine, setSmartRemoveTitleLine] = useState(false);
+  const [smartIsDirtySource, setSmartIsDirtySource] = useState(true);
+  const [previewSelectedIdx, setPreviewSelectedIdx] = useState<number | null>(null);
 
   // Tab 4: Paste Raw or URL
   const [pasteTitleRaw, setPasteTitleRaw] = useState('');
@@ -72,10 +97,79 @@ export default function ImportModal({
   const [chapterUrl, setChapterUrl] = useState('');
   const [isFetchingUrl, setIsFetchingUrl] = useState(false);
 
-  const regexPreview = useMemo(() => {
-    if (!mergedRawText.trim()) return { items: [], error: undefined };
-    return splitMergedTxtByRegex(mergedRawText, customRegex, startOrderNumber);
-  }, [mergedRawText, customRegex, startOrderNumber]);
+  const splitPreview = useMemo(() => {
+    if (!mergedRawText.trim()) {
+      return {
+        items: [] as {
+          orderPrefix: string;
+          chapterNumber: number;
+          filename: string;
+          titleRaw: string;
+          rawContent: string;
+          charCount: number;
+          isPrologue?: boolean;
+          warning?: string;
+        }[],
+        error: undefined as string | undefined,
+      };
+    }
+
+    if (splitEngineMode === 'smart') {
+      try {
+        const smartItems = splitChaptersSmart(mergedRawText, {
+          startNumber: startOrderNumber,
+          digits: smartDigits,
+          includePrologue: smartIncludePrologue,
+          prologueTitle: smartPrologueTitle,
+          removeTitleLine: smartRemoveTitleLine,
+          isDirtySource: smartIsDirtySource,
+        });
+        return {
+          items: smartItems.map((ch) => ({
+            orderPrefix: ch.orderPrefix,
+            chapterNumber: ch.chapterNumber,
+            filename: ch.filename,
+            titleRaw: ch.rawTitle,
+            rawContent: ch.content,
+            charCount: ch.charCount,
+            isPrologue: ch.isPrologue,
+            warning: ch.warning,
+          })),
+          error: undefined,
+        };
+      } catch (err) {
+        return {
+          items: [],
+          error: (err as Error).message || 'Lỗi khi tách chương thông minh.',
+        };
+      }
+    }
+
+    const res = splitMergedTxtByRegex(mergedRawText, customRegex, startOrderNumber);
+    return {
+      items: res.items.map((item) => ({
+        orderPrefix: item.orderPrefix,
+        chapterNumber: item.chapterNumber,
+        filename: safeFilename(`${item.orderPrefix}_${item.titleRaw}.txt`),
+        titleRaw: item.titleRaw,
+        rawContent: item.rawContent,
+        charCount: item.charCount,
+        isPrologue: false,
+        warning: item.warning,
+      })),
+      error: res.error,
+    };
+  }, [
+    mergedRawText,
+    splitEngineMode,
+    startOrderNumber,
+    smartDigits,
+    smartIncludePrologue,
+    smartPrologueTitle,
+    smartRemoveTitleLine,
+    smartIsDirtySource,
+    customRegex,
+  ]);
 
   if (!isOpen) return null;
 
@@ -86,26 +180,26 @@ export default function ImportModal({
     if (!fileList || fileList.length === 0) return;
     setIsProcessing(true);
     setErrorMessage(null);
-    setStatusMessage(`Đang phân tích ${fileList.length} tệp từ thư mục...`);
+    setFolderWarnings([]);
+    setStatusMessage(`Đang phân tích ${fileList.length} tệp đầu vào...`);
     try {
       const files = Array.from(fileList);
-      const parsed = await parseFolderTxtFiles(
+      const { chapters, warnings } = await parseFolderOrZipTxtFiles(
         files,
         novelId,
-        existingChapterCount
+        existingChapterCount,
+        inputEncoding
       );
-      if (parsed.length === 0) {
-        setErrorMessage('Không tìm thấy tệp .txt nào trong thư mục đã chọn.');
-      } else {
-        setFolderParsedChapters(parsed);
-        setStatusMessage(
-          `Đã nhận diện thành công ${parsed.length} chương theo thứ tự prefix XXXX.`
-        );
-      }
+      setFolderParsedChapters(chapters);
+      setFolderWarnings(warnings);
+      setStatusMessage(
+        `Đã nhận diện thành công ${chapters.length.toLocaleString()} chương theo thứ tự prefix XXXX.`
+      );
     } catch (err) {
-      setErrorMessage((err as Error).message || 'Lỗi khi đọc thư mục .txt');
+      setErrorMessage((err as Error).message || 'Lỗi khi đọc thư mục / gói .ZIP');
     } finally {
       setIsProcessing(false);
+      e.target.value = '';
     }
   };
 
@@ -166,37 +260,96 @@ export default function ImportModal({
     setErrorMessage(null);
     try {
       const buffer = await file.arrayBuffer();
-      const text = decodeChineseTextBuffer(buffer);
+      setMergedFileBuffer(buffer);
+      const text = decodeTextWithEncoding(buffer, inputEncoding);
       setMergedRawText(text);
       setMergedFileName(file.name);
+      setPreviewSelectedIdx(0);
       setStatusMessage(
-        `Đã tải file "${file.name}" (${text.length.toLocaleString()} ký tự). Hãy kiểm tra bảng Preview tách chương bên dưới.`
+        `Đã tải file "${file.name}" (${text.length.toLocaleString()} ký tự). Hãy kiểm tra danh sách chương tách bên dưới.`
       );
     } catch (err) {
       setErrorMessage((err as Error).message || 'Không thể đọc file .txt');
+    } finally {
+      setIsProcessing(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleEncodingChangeForMergedTxt = (newEncoding: InputEncoding) => {
+    setInputEncoding(newEncoding);
+    if (mergedFileBuffer) {
+      try {
+        const redecoded = decodeTextWithEncoding(mergedFileBuffer, newEncoding);
+        setMergedRawText(redecoded);
+        setErrorMessage(null);
+      } catch (err) {
+        setErrorMessage((err as Error).message);
+      }
+    }
+  };
+
+  const handleLoadSampleMergedText = () => {
+    const sample = getSmartSplitSampleText();
+    setMergedFileBuffer(null);
+    setMergedRawText(sample);
+    setMergedFileName('truyen_mau.txt');
+    setPreviewSelectedIdx(0);
+    setErrorMessage(null);
+    setStatusMessage('Đã nạp văn bản mẫu để kiểm tra bộ tách chương thông minh.');
+  };
+
+  const handleDownloadSplitZipNow = async () => {
+    if (splitPreview.items.length === 0) return;
+    setIsProcessing(true);
+    try {
+      const blob = await generateSplitChaptersZipBlob(
+        splitPreview.items.map((item) => ({
+          filename: item.filename,
+          content: item.rawContent,
+        })),
+        'utf-8'
+      );
+      const baseBookName = safeFilename(
+        mergedFileName.replace(/\.txt$/i, '') || 'truyen_da_tach'
+      );
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${baseBookName}_split.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setStatusMessage(
+        `Đã tải xuống gói "${baseBookName}_split.zip" (${splitPreview.items.length.toLocaleString()} chương)!`
+      );
+    } catch (err) {
+      setErrorMessage((err as Error).message || 'Không thể đóng gói .ZIP.');
     } finally {
       setIsProcessing(false);
     }
   };
 
   const handleConfirmMergedTxtImport = async () => {
-    if (regexPreview.items.length === 0) return;
+    if (splitPreview.items.length === 0) return;
     setIsProcessing(true);
     try {
-      const chapters: Chapter[] = regexPreview.items.map((item, idx) => ({
-        id: `ch-${novelId}-${item.orderPrefix}-${Date.now()}-${idx}`,
-        novelId,
-        orderPrefix: item.orderPrefix,
-        chapterNumber: item.chapterNumber,
-        fileNameOriginal: `${item.orderPrefix}_${item.titleRaw}.txt`,
-        titleRaw: item.titleRaw,
-        titleTranslated: '',
-        rawContent: item.rawContent,
-        translatedContent: '',
-        charCount: item.charCount,
-        status: 'raw',
-        updatedAt: Date.now(),
-      }));
+      const chapters: Chapter[] = splitPreview.items.map((item, idx) => {
+        const cleanedBody = cleanRawChapterBody(item.rawContent, item.titleRaw);
+        return {
+          id: `ch-${novelId}-${item.orderPrefix}-${Date.now()}-${idx}`,
+          novelId,
+          orderPrefix: item.orderPrefix,
+          chapterNumber: item.chapterNumber,
+          fileNameOriginal: item.filename,
+          titleRaw: item.titleRaw,
+          titleTranslated: '',
+          rawContent: cleanedBody,
+          translatedContent: '',
+          charCount: cleanedBody.replace(/\s+/g, '').length,
+          status: 'raw',
+          updatedAt: Date.now(),
+        };
+      });
       await onImportChapters(chapters);
       onClose();
     } finally {
@@ -277,16 +430,16 @@ export default function ImportModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
-      <div className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-[#E4DFD7] bg-[#FAF8F5] text-[#1C1917] shadow-2xl">
+      <div className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-[#E4DFD7] bg-[#FAF8F5] text-[#1C1917] shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-[#E4DFD7] bg-[#F2EFE9] px-6 py-4">
           <div>
             <h2 className="font-display text-lg font-bold text-[#1C1917]">
-              Nhập Chương Truyện Đa Nguồn
+              Nhập &amp; Tách Chương Truyện Đa Nguồn
             </h2>
             <p className="text-xs text-[#6B635B]">
-              Hỗ trợ Thư mục tệp .TXT định dạng XXXX_Tên_chương.txt · Sách .EPUB ·
-              1 File .TXT gộp (Custom Regex) · Dán trực tiếp / URL
+              Hỗ trợ Thư mục / Gói .ZIP chương .TXT (XXXX_Tên_chương.txt) · Sách .EPUB ·
+              Trình Tách Chương Thông Minh (Nguồn bẩn / Nguồn sạch / Regex) · Dán trực tiếp / URL
             </p>
           </div>
           <button
@@ -311,7 +464,7 @@ export default function ImportModal({
             }`}
           >
             <FolderUp className="h-4 w-4" />
-            1. Thư Mục .TXT (XXXX_Tên_chương.txt)
+            1. Thư Mục / Gói .ZIP (.TXT)
           </button>
           <button
             onClick={() => {
@@ -338,8 +491,8 @@ export default function ImportModal({
                 : 'border-transparent text-[#6B635B] hover:text-[#1C1917]'
             }`}
           >
-            <FileText className="h-4 w-4" />
-            3. File .TXT Gộp (Custom Regex)
+            <Wand2 className="h-4 w-4" />
+            3. Tách File .TXT Gộp (Thông Minh / Regex)
           </button>
           <button
             onClick={() => {
@@ -373,19 +526,33 @@ export default function ImportModal({
             </div>
           )}
 
-          {/* TAB 1: FOLDER / MULTI TXT */}
+          {/* TAB 1: FOLDER / MULTI TXT / ZIP */}
           {activeTab === 'folder_txt' && (
             <div className="space-y-4">
               <div className="rounded-xl border border-dashed border-[#C83E31]/40 bg-[#F2EFE9]/50 p-6 text-center">
                 <FolderUp className="mx-auto h-10 w-10 text-[#C83E31]" />
                 <h3 className="mt-2 text-sm font-semibold text-[#1C1917]">
-                  Chọn Thư Mục chứa các tệp chương .TXT (ví dụ: 0001_第1章 ....txt)
+                  Chọn Thư Mục, Nhiều File .TXT hoặc Gói .ZIP chứa chương (ví dụ: 0001_第1章 ....txt)
                 </h3>
                 <p className="mt-1 text-xs text-[#6B635B]">
-                  Tự động bóc tách prefix số thứ tự (0000, 0001, 0002...) để sắp xếp
-                  chính xác 100%, khử dòng tiêu đề lặp ở đầu file và hỗ trợ cả bảng mã
-                  UTF-8 lẫn GB18030/GBK.
+                  Tự động nhận diện prefix số thứ tự (0000, 0001, 0002...), quét cả thư mục con trong .ZIP,
+                  kiểm tra thiếu chương ở giữa / trùng số thứ tự và hỗ trợ đa bảng mã.
                 </p>
+
+                <div className="mt-3 flex items-center justify-center gap-2 text-xs">
+                  <span className="font-medium text-[#6B635B]">Bảng mã đọc file:</span>
+                  <select
+                    value={inputEncoding}
+                    onChange={(e) => setInputEncoding(e.target.value as InputEncoding)}
+                    className="rounded-lg border border-[#D5CFC4] bg-white px-2.5 py-1.5 text-xs font-medium text-[#1C1917]"
+                  >
+                    <option value="auto">Tự động (UTF-8 / GB18030 / UTF-16)</option>
+                    <option value="utf-8">UTF-8</option>
+                    <option value="gb18030">GB18030 / GBK (Tiếng Trung)</option>
+                    <option value="utf-16le">UTF-16LE</option>
+                    <option value="utf-16be">UTF-16BE</option>
+                  </select>
+                </div>
 
                 <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
                   <input
@@ -408,9 +575,26 @@ export default function ImportModal({
                   </button>
 
                   <input
+                    ref={zipFileInputRef}
+                    type="file"
+                    accept=".zip,application/zip"
+                    multiple
+                    onChange={handleFolderOrFilesSelected}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => zipFileInputRef.current?.click()}
+                    className="inline-flex items-center gap-2 rounded-lg border border-[#C83E31] bg-white px-4 py-2.5 text-xs font-semibold text-[#C83E31] hover:bg-[#C83E31]/5"
+                  >
+                    <FileArchive className="h-4 w-4" />
+                    Chọn File .ZIP Chứa Chương .TXT
+                  </button>
+
+                  <input
                     ref={multiFilesInputRef}
                     type="file"
-                    accept=".txt"
+                    accept=".txt,.zip"
                     multiple
                     onChange={handleFolderOrFilesSelected}
                     className="hidden"
@@ -421,10 +605,21 @@ export default function ImportModal({
                     className="inline-flex items-center gap-2 rounded-lg border border-[#D5CFC4] bg-white px-4 py-2.5 text-xs font-semibold text-[#1C1917] hover:bg-[#F2EFE9]"
                   >
                     <Upload className="h-4 w-4" />
-                    Hoặc Chọn Nhiều File .TXT Lẻ
+                    Chọn Nhiều File .TXT Lẻ
                   </button>
                 </div>
               </div>
+
+              {folderWarnings.length > 0 && (
+                <div className="space-y-1.5 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+                  {folderWarnings.map((w, i) => (
+                    <div key={i} className="flex items-start gap-2">
+                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+                      <span>{w}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {folderParsedChapters.length > 0 && (
                 <div className="rounded-lg border border-[#E4DFD7] bg-white">
@@ -439,7 +634,7 @@ export default function ImportModal({
                     </span>
                   </div>
                   <div className="max-h-60 divide-y divide-[#E4DFD7] overflow-y-auto text-xs">
-                    {folderParsedChapters.slice(0, 100).map((ch) => (
+                    {folderParsedChapters.slice(0, 120).map((ch) => (
                       <div
                         key={ch.id}
                         className="flex items-center justify-between px-4 py-2 hover:bg-[#FAF8F5]"
@@ -518,132 +713,315 @@ export default function ImportModal({
             </div>
           )}
 
-          {/* TAB 3: MERGED TXT WITH CUSTOM REGEX */}
+          {/* TAB 3: MERGED TXT WITH SMART SPLITTER OR CUSTOM REGEX */}
           {activeTab === 'merged_txt' && (
             <div className="space-y-4">
+              {/* Top Upload Bar */}
               <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-[#E4DFD7] bg-[#F2EFE9]/60 p-4">
                 <div>
                   <h3 className="text-xs font-bold text-[#1C1917]">
-                    Tải 1 File .TXT Gộp Toàn Truyện + Tùy Chỉnh Regex Tách Chương
+                    Trình Tách Chương Truyện Từ 1 File .TXT Gộp (Thông Minh / Regex)
                   </h3>
                   <p className="text-xs text-[#6B635B]">
-                    Dành cho các bản raw gộp 1 file bị lỗi định dạng tiêu đề chương. Xem
-                    trước ngay số chương tách ra trước khi lưu.
+                    Tách 1 file .TXT lớn thành các chương đánh số thứ tự chuẩn — có thể nạp
+                    thẳng vào kệ sách hoặc tải ngay gói <code className="font-mono">.ZIP</code> chương đã tách về máy.
                   </p>
                 </div>
-                <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-[#C83E31] px-4 py-2 text-xs font-semibold text-white hover:bg-[#B03226]">
-                  <Upload className="h-4 w-4" />
-                  <span>{mergedFileName ? 'Đổi File .TXT Khác' : 'Chọn 1 File .TXT Gộp'}</span>
-                  <input
-                    type="file"
-                    accept=".txt"
-                    onChange={handleMergedTxtSelected}
-                    className="hidden"
-                  />
-                </label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    value={inputEncoding}
+                    onChange={(e) =>
+                      handleEncodingChangeForMergedTxt(e.target.value as InputEncoding)
+                    }
+                    className="rounded-lg border border-[#D5CFC4] bg-white px-2.5 py-2 text-xs font-medium text-[#1C1917]"
+                  >
+                    <option value="auto">Mã hóa: Tự động</option>
+                    <option value="utf-8">UTF-8</option>
+                    <option value="gb18030">GB18030 / GBK</option>
+                    <option value="utf-16le">UTF-16LE</option>
+                    <option value="utf-16be">UTF-16BE</option>
+                  </select>
+
+                  <button
+                    type="button"
+                    onClick={handleLoadSampleMergedText}
+                    className="rounded-lg border border-[#D5CFC4] bg-white px-3 py-2 text-xs font-semibold text-[#1C1917] hover:bg-[#FAF8F5]"
+                  >
+                    Dùng văn bản mẫu
+                  </button>
+
+                  <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-[#C83E31] px-4 py-2 text-xs font-semibold text-white hover:bg-[#B03226]">
+                    <Upload className="h-4 w-4" />
+                    <span>
+                      {mergedFileName ? 'Đổi File .TXT Khác' : 'Chọn 1 File .TXT Gộp'}
+                    </span>
+                    <input
+                      type="file"
+                      accept=".txt"
+                      onChange={handleMergedTxtSelected}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
               </div>
 
-              {/* Regex Configuration */}
-              <div className="rounded-lg border border-[#E4DFD7] bg-white p-4 space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <label className="text-xs font-semibold text-[#1C1917]">
-                    Biểu thức chính quy (Regex) nhận diện dòng Tiêu đề chương:
-                  </label>
-                  <div className="flex items-center gap-2 text-xs">
-                    <span className="text-[#6B635B]">Đánh số bắt đầu từ:</span>
-                    <input
-                      type="number"
-                      value={startOrderNumber}
-                      onChange={(e) =>
-                        setStartOrderNumber(Math.max(0, parseInt(e.target.value, 10) || 0))
-                      }
-                      className="w-20 rounded border border-[#D5CFC4] px-2 py-1 font-mono-num text-xs"
-                    />
+              {/* Engine Mode Selector + Options */}
+              <div className="rounded-lg border border-[#E4DFD7] bg-white p-4 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E4DFD7] pb-3">
+                  <div className="inline-flex rounded-lg border border-[#D5CFC4] bg-[#F2EFE9] p-1">
+                    <button
+                      type="button"
+                      onClick={() => setSplitEngineMode('smart')}
+                      className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                        splitEngineMode === 'smart'
+                          ? 'bg-[#C83E31] text-white shadow-xs'
+                          : 'text-[#6B635B] hover:text-[#1C1917]'
+                      }`}
+                    >
+                      <Wand2 className="h-3.5 w-3.5" />
+                      Bộ Tách Thông Minh (Nguồn bẩn / Nguồn sạch)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSplitEngineMode('regex')}
+                      className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                        splitEngineMode === 'regex'
+                          ? 'bg-[#C83E31] text-white shadow-xs'
+                          : 'text-[#6B635B] hover:text-[#1C1917]'
+                      }`}
+                    >
+                      <Code2 className="h-3.5 w-3.5" />
+                      Biểu Thức Regex Tùy Chỉnh
+                    </button>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3 text-xs">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[#6B635B]">Số bắt đầu:</span>
+                      <input
+                        type="number"
+                        min={0}
+                        value={startOrderNumber}
+                        onChange={(e) =>
+                          setStartOrderNumber(
+                            Math.max(0, parseInt(e.target.value, 10) || 0)
+                          )
+                        }
+                        className="w-16 rounded border border-[#D5CFC4] px-2 py-1 font-mono-num text-xs"
+                      />
+                    </div>
+                    {splitEngineMode === 'smart' && (
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[#6B635B]">Chữ số đệm:</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={8}
+                          value={smartDigits}
+                          onChange={(e) =>
+                            setSmartDigits(
+                              Math.min(
+                                8,
+                                Math.max(1, parseInt(e.target.value, 10) || 4)
+                              )
+                            )
+                          }
+                          className="w-14 rounded border border-[#D5CFC4] px-2 py-1 font-mono-num text-xs"
+                        />
+                      </div>
+                    )}
                   </div>
                 </div>
 
-                <input
-                  type="text"
-                  value={customRegex}
-                  onChange={(e) => setCustomRegex(e.target.value)}
-                  placeholder="Nhập biểu thức Regex..."
-                  className="w-full rounded-lg border border-[#D5CFC4] bg-[#FAF8F5] px-3 py-2 font-mono-num text-xs text-[#1C1917] focus:border-[#C83E31] focus:outline-none"
-                />
-
-                <div className="space-y-1.5">
-                  <span className="text-[11px] font-medium text-[#6B635B]">
-                    Chọn nhanh mẫu Regex trị raw lỗi:
-                  </span>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {REGEX_SPLIT_PRESETS.map((preset) => (
-                      <button
-                        key={preset.id}
-                        type="button"
-                        onClick={() => setCustomRegex(preset.pattern)}
-                        className={`text-left rounded-lg border p-2.5 transition-colors ${
-                          customRegex === preset.pattern
-                            ? 'border-[#C83E31] bg-[#C83E31]/5'
-                            : 'border-[#E4DFD7] hover:bg-[#FAF8F5]'
-                        }`}
-                      >
+                {splitEngineMode === 'smart' ? (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <label className="flex items-start gap-2.5 rounded-lg border border-[#E4DFD7] bg-[#FAF8F5] p-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={smartIsDirtySource}
+                        onChange={(e) => setSmartIsDirtySource(e.target.checked)}
+                        className="mt-0.5 rounded border-[#D5CFC4] text-[#C83E31]"
+                      />
+                      <div>
                         <div className="text-xs font-semibold text-[#1C1917]">
-                          {preset.label}
+                          Chế độ Nguồn bẩn (Lọc câu văn có chữ &quot;第...章&quot; &amp; dòng rác)
                         </div>
                         <div className="mt-0.5 text-[11px] text-[#6B635B]">
-                          {preset.description}
+                          Tránh tách nhầm khi trong đoạn văn kể chuyện nhắc tới &quot;第1章...&quot;,
+                          đồng thời tự động xóa các dòng phân cách <code className="font-mono">===</code>,{' '}
+                          <code className="font-mono">---</code>, <code className="font-mono">oOo</code>.
                         </div>
-                      </button>
-                    ))}
+                      </div>
+                    </label>
+
+                    <label className="flex items-start gap-2.5 rounded-lg border border-[#E4DFD7] bg-[#FAF8F5] p-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={smartRemoveTitleLine}
+                        onChange={(e) => setSmartRemoveTitleLine(e.target.checked)}
+                        className="mt-0.5 rounded border-[#D5CFC4] text-[#C83E31]"
+                      />
+                      <div>
+                        <div className="text-xs font-semibold text-[#1C1917]">
+                          Xóa dòng tiêu đề chương khỏi nội dung file xuất
+                        </div>
+                        <div className="mt-0.5 text-[11px] text-[#6B635B]">
+                          Giữ tên chương ở tên file, chỉ lưu phần thân văn bản bên trong.
+                        </div>
+                      </div>
+                    </label>
+
+                    <div className="flex items-center justify-between gap-3 rounded-lg border border-[#E4DFD7] bg-[#FAF8F5] p-3 sm:col-span-2">
+                      <label className="flex items-center gap-2.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={smartIncludePrologue}
+                          onChange={(e) => setSmartIncludePrologue(e.target.checked)}
+                          className="rounded border-[#D5CFC4] text-[#C83E31]"
+                        />
+                        <div>
+                          <div className="text-xs font-semibold text-[#1C1917]">
+                            Tách riêng phần Lời mở đầu / Văn án (trước Chương 1)
+                          </div>
+                          <div className="text-[11px] text-[#6B635B]">
+                            Nếu tắt, đoạn văn án đầu file sẽ được gộp vào Chương 1.
+                          </div>
+                        </div>
+                      </label>
+
+                      {smartIncludePrologue && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-[#6B635B] whitespace-nowrap">
+                            Tên mở đầu:
+                          </span>
+                          <input
+                            type="text"
+                            value={smartPrologueTitle}
+                            onChange={(e) => setSmartPrologueTitle(e.target.value)}
+                            placeholder="Lời mở đầu"
+                            className="w-36 rounded border border-[#D5CFC4] bg-white px-2.5 py-1 text-xs"
+                          />
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="space-y-3">
+                    <input
+                      type="text"
+                      value={customRegex}
+                      onChange={(e) => setCustomRegex(e.target.value)}
+                      placeholder="Nhập biểu thức Regex..."
+                      className="w-full rounded-lg border border-[#D5CFC4] bg-[#FAF8F5] px-3 py-2 font-mono-num text-xs text-[#1C1917] focus:border-[#C83E31] focus:outline-none"
+                    />
+
+                    <div className="space-y-1.5">
+                      <span className="text-[11px] font-medium text-[#6B635B]">
+                        Chọn nhanh mẫu Regex trị raw lỗi:
+                      </span>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {REGEX_SPLIT_PRESETS.map((preset) => (
+                          <button
+                            key={preset.id}
+                            type="button"
+                            onClick={() => setCustomRegex(preset.pattern)}
+                            className={`text-left rounded-lg border p-2.5 transition-colors ${
+                              customRegex === preset.pattern
+                                ? 'border-[#C83E31] bg-[#C83E31]/5'
+                                : 'border-[#E4DFD7] hover:bg-[#FAF8F5]'
+                            }`}
+                          >
+                            <div className="text-xs font-semibold text-[#1C1917]">
+                              {preset.label}
+                            </div>
+                            <div className="mt-0.5 text-[11px] text-[#6B635B]">
+                              {preset.description}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {/* Live Split Preview */}
+              {/* Live Split Preview + Chapter Inspector */}
               {mergedRawText && (
-                <div className="rounded-lg border border-[#E4DFD7] bg-white">
-                  <div className="flex items-center justify-between border-b border-[#E4DFD7] bg-[#F2EFE9] px-4 py-2.5 text-xs font-semibold">
-                    <span>
-                      Kết quả Test Regex trực tiếp:{' '}
-                      <strong className="text-[#C83E31]">
-                        {regexPreview.items.length.toLocaleString()} chương
-                      </strong>
-                    </span>
-                    <span className="text-[#6B635B]">
-                      Cảnh báo bất thường:{' '}
-                      {regexPreview.items.filter((i) => i.warning).length} chương
-                    </span>
-                  </div>
-                  {regexPreview.error ? (
-                    <div className="p-4 text-xs text-red-600">{regexPreview.error}</div>
-                  ) : (
-                    <div className="max-h-56 divide-y divide-[#E4DFD7] overflow-y-auto text-xs">
-                      {regexPreview.items.slice(0, 120).map((item, idx) => (
-                        <div
-                          key={idx}
-                          className="flex items-center justify-between px-4 py-2 hover:bg-[#FAF8F5]"
-                        >
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2">
-                              <span className="font-mono-num font-semibold text-[#C83E31]">
-                                [{item.orderPrefix}]
-                              </span>
-                              <span className="truncate font-medium">
-                                {item.titleRaw}
-                              </span>
-                            </div>
-                            {item.warning && (
-                              <div className="mt-0.5 text-[11px] text-amber-700">
-                                ⚠ {item.warning}
-                              </div>
-                            )}
-                          </div>
-                          <span className="font-mono-num text-[#6B635B] ml-3 shrink-0">
-                            {item.charCount.toLocaleString()} chữ
-                          </span>
-                        </div>
-                      ))}
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
+                  <div className="rounded-lg border border-[#E4DFD7] bg-white lg:col-span-7">
+                    <div className="flex items-center justify-between border-b border-[#E4DFD7] bg-[#F2EFE9] px-4 py-2.5 text-xs font-semibold">
+                      <span>
+                        Kết quả tách chương:{' '}
+                        <strong className="text-[#C83E31]">
+                          {splitPreview.items.length.toLocaleString()} chương
+                        </strong>
+                      </span>
+                      <span className="text-[#6B635B]">
+                        Cảnh báo độ dài:{' '}
+                        {splitPreview.items.filter((i) => i.warning).length} chương
+                      </span>
                     </div>
-                  )}
+                    {splitPreview.error ? (
+                      <div className="p-4 text-xs text-red-600">{splitPreview.error}</div>
+                    ) : (
+                      <div className="max-h-64 divide-y divide-[#E4DFD7] overflow-y-auto text-xs">
+                        {splitPreview.items.slice(0, 200).map((item, idx) => (
+                          <div
+                            key={idx}
+                            onClick={() => setPreviewSelectedIdx(idx)}
+                            className={`flex cursor-pointer items-center justify-between px-4 py-2 transition-colors ${
+                              previewSelectedIdx === idx
+                                ? 'bg-[#C83E31]/10'
+                                : 'hover:bg-[#FAF8F5]'
+                            }`}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono-num font-semibold text-[#C83E31]">
+                                  [{item.orderPrefix}]
+                                </span>
+                                {item.isPrologue && (
+                                  <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
+                                    Mở đầu
+                                  </span>
+                                )}
+                                <span className="truncate font-medium">
+                                  {item.titleRaw}
+                                </span>
+                              </div>
+                              {item.warning && (
+                                <div className="mt-0.5 text-[11px] text-amber-700">
+                                  ⚠ {item.warning}
+                                </div>
+                              )}
+                            </div>
+                            <span className="font-mono-num text-[#6B635B] ml-3 shrink-0">
+                              {item.charCount.toLocaleString()} chữ
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Quick Chapter Content Viewer */}
+                  <div className="flex flex-col rounded-lg border border-[#E4DFD7] bg-white lg:col-span-5">
+                    <div className="flex items-center justify-between border-b border-[#E4DFD7] bg-[#F2EFE9] px-3.5 py-2.5 text-xs font-semibold">
+                      <span className="flex items-center gap-1.5 truncate">
+                        <Eye className="h-3.5 w-3.5 text-[#C83E31]" />
+                        {previewSelectedIdx !== null &&
+                        splitPreview.items[previewSelectedIdx]
+                          ? splitPreview.items[previewSelectedIdx].filename
+                          : 'Xem trước nội dung chương'}
+                      </span>
+                    </div>
+                    <div className="max-h-64 flex-1 overflow-y-auto p-3.5 font-mono text-xs leading-relaxed whitespace-pre-wrap text-[#1C1917]">
+                      {previewSelectedIdx !== null &&
+                      splitPreview.items[previewSelectedIdx]
+                        ? splitPreview.items[previewSelectedIdx].rawContent.slice(0, 3000)
+                        : 'Bấm vào một chương bên trái để kiểm tra nội dung sau khi tách.'}
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
@@ -719,7 +1097,7 @@ export default function ImportModal({
         </div>
 
         {/* Footer Actions */}
-        <div className="flex items-center justify-between border-t border-[#E4DFD7] bg-[#F2EFE9] px-6 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#E4DFD7] bg-[#F2EFE9] px-6 py-4">
           <button
             type="button"
             onClick={onClose}
@@ -757,17 +1135,30 @@ export default function ImportModal({
           )}
 
           {activeTab === 'merged_txt' && (
-            <button
-              type="button"
-              disabled={isProcessing || regexPreview.items.length === 0}
-              onClick={handleConfirmMergedTxtImport}
-              className="inline-flex items-center gap-2 rounded-lg bg-[#C83E31] px-5 py-2 text-xs font-semibold text-white hover:bg-[#B03226] disabled:opacity-50"
-            >
-              <Sparkles className="h-4 w-4" />
-              <span>
-                Xác Nhận Tách & Nạp {regexPreview.items.length.toLocaleString()} Chương
-              </span>
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={isProcessing || splitPreview.items.length === 0}
+                onClick={handleDownloadSplitZipNow}
+                className="inline-flex items-center gap-2 rounded-lg border border-[#C83E31] bg-white px-4 py-2 text-xs font-semibold text-[#C83E31] hover:bg-[#C83E31]/5 disabled:opacity-50"
+              >
+                <Download className="h-4 w-4" />
+                <span>
+                  Tải Ngay .ZIP ({splitPreview.items.length.toLocaleString()} chương)
+                </span>
+              </button>
+              <button
+                type="button"
+                disabled={isProcessing || splitPreview.items.length === 0}
+                onClick={handleConfirmMergedTxtImport}
+                className="inline-flex items-center gap-2 rounded-lg bg-[#C83E31] px-5 py-2 text-xs font-semibold text-white hover:bg-[#B03226] disabled:opacity-50"
+              >
+                <Sparkles className="h-4 w-4" />
+                <span>
+                  Xác Nhận Tách &amp; Nạp {splitPreview.items.length.toLocaleString()} Chương Vào Kệ
+                </span>
+              </button>
+            </div>
           )}
 
           {activeTab === 'paste_url' && (
