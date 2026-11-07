@@ -120,12 +120,16 @@ QUY TẮC TRÍCH XUẤT CHUẨN:
 3. Với phân loại "character" (Nhân vật):
    - "aliases": Nếu trong văn bản nhân vật có tên gọi khác, tự, đạo hiệu, biệt danh (VD: "Hàn Lão Ma", "Khương Thanh Dương"), hãy gom vào mảng "aliases" của cùng nhân vật đó để tránh tách thành 2 người.
    - "notes": BẮT BUỘC ghi rõ Giới tính + Vai vế/Thân phận + Cặp đại từ xưng hô chuẩn trong ngữ cảnh (Ví dụ: "Nam chính, đệ tử đạo viện Phong Lâm Thành; xưng Ta - Ngươi với kẻ địch, Đệ - Sư huynh với Tả Quang Liệt").
-4. "policy": Chọn chính sách dịch:
+4. "forbiddenTranslations": Nếu tên riêng hoặc thuật ngữ dễ bị dịch sai sang nghĩa đen thông thường, sai âm đọc đa âm hoặc sai hậu tố (VD: tên người "青羊" = "Thanh Dương" cấm dịch nghĩa đen là ["Dê Xanh"]; tên môn phái "青云宗" = "Thanh Vân Tông" cấm dịch là ["Thanh Vân Môn"]), hãy liệt kê vào mảng "forbiddenTranslations" (nếu không có nguy cơ dịch nhầm thì trả về []).
+5. "evidence" & "confidence":
+   - "evidence": Trích nguyên văn 1 câu hoặc cụm ngắn (10-35 chữ Hán) trong văn bản nơi thuật ngữ xuất hiện để làm bằng chứng ngữ cảnh.
+   - "confidence": Điểm độ tin cậy từ 0.0 đến 1.0 (ví dụ 0.95 cho tên riêng rõ ràng, 0.75 cho từ cần suy đoán).
+6. "policy": Chọn chính sách dịch:
    - "force": Bắt buộc dịch cố định (dùng cho Tên nhân vật, Địa danh, Tông môn, Công pháp, Cảnh giới riêng).
    - "contextual": Tùy ngữ cảnh (dùng cho Danh hiệu/Chức vị hoặc Xưng hô thay đổi theo đối tượng).
    - "keep_source": Giữ nguyên gốc (dùng cho Mã hệ thống đặc biệt như [SSS]).`;
 
-      const prompt = `Hãy quét kỹ văn bản tiếng Trung dưới đây và trích xuất danh sách thuật ngữ + biến thể (aliases) + ma trận nhân vật chuẩn xác nhất cho bộ Từ điển tiền kỳ.${existingHint}
+      const prompt = `Hãy quét kỹ văn bản tiếng Trung dưới đây và trích xuất danh sách thuật ngữ + biến thể (aliases) + từ cấm dịch sai (forbiddenTranslations) + câu bằng chứng (evidence) + ma trận nhân vật chuẩn xác nhất cho bộ Từ điển tiền kỳ.${existingHint}
 
 [VĂN BẢN TIẾNG TRUNG CẦN QUÉT]:
 ${slicedInput}`;
@@ -171,6 +175,12 @@ ${slicedInput}`;
                         description:
                           'Danh sách các cách viết tiếng Trung khác / biệt danh / đạo hiệu của cùng thực thể này (nếu có, nếu không trả về mảng rỗng []).',
                       },
+                      forbiddenTranslations: {
+                        type: 'array',
+                        items: { type: 'string' },
+                        description:
+                          'Danh sách các cách dịch sai dễ nhầm cần cấm (VD: dịch nghĩa đen tên người, sai hậu tố Tông/Môn/Phái; nếu không có trả về []).',
+                      },
                       policy: {
                         type: 'string',
                         enum: ['force', 'prefer', 'contextual', 'keep_source'],
@@ -198,14 +208,26 @@ ${slicedInput}`;
                         description:
                           'Ghi chú ngắn gọn về vai trò, giới tính, quan hệ và quy tắc xưng hô.',
                       },
+                      evidence: {
+                        type: 'string',
+                        description:
+                          'Câu hoặc cụm bằng chứng ngắn (10-35 chữ Hán) trích từ nguyên văn nơi thuật ngữ xuất hiện.',
+                      },
+                      confidence: {
+                        type: 'number',
+                        description: 'Độ tin cậy của thuật ngữ từ 0.0 đến 1.0.',
+                      },
                     },
                     required: [
                       'sourceTerm',
                       'targetTerm',
                       'aliases',
+                      'forbiddenTranslations',
                       'policy',
                       'category',
                       'notes',
+                      'evidence',
+                      'confidence',
                     ],
                     additionalProperties: false,
                   },
@@ -233,9 +255,12 @@ ${slicedInput}`;
           sourceTerm: string;
           targetTerm: string;
           aliases?: string[];
+          forbiddenTranslations?: string[];
           policy?: 'force' | 'prefer' | 'contextual' | 'keep_source';
           category: string;
           notes: string;
+          evidence?: string;
+          confidence?: number;
         }>;
       }>(rawOutputText, `GlossaryExtract[${reqId}]`);
 

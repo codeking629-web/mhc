@@ -166,7 +166,7 @@ export default function InstructionsGlossaryModal({
   const [glossarySearch, setGlossarySearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [glossaryScopeFilter, setGlossaryScopeFilter] = useState<
-    'all' | 'in_active_chapter' | 'pinned' | 'ai_scanned' | 'draft'
+    'all' | 'in_active_chapter' | 'pinned' | 'ai_scanned' | 'draft' | 'conflict'
   >('all');
   const [newSource, setNewSource] = useState('');
   const [newTarget, setNewTarget] = useState('');
@@ -200,6 +200,7 @@ export default function InstructionsGlossaryModal({
     totalChunks: number;
     totalChapters: number;
     newTermsAdded: number;
+    conflictsDetected: number;
     activeWorkers: number;
     lastModelUsed?: string;
     lastKeyUsed?: number;
@@ -208,6 +209,7 @@ export default function InstructionsGlossaryModal({
     totalChunks: 0,
     totalChapters: 0,
     newTermsAdded: 0,
+    conflictsDetected: 0,
     activeWorkers: 0,
   });
   const preScanStatusRef = useRef<'idle' | 'running' | 'paused'>('idle');
@@ -215,7 +217,9 @@ export default function InstructionsGlossaryModal({
   const preScanCursorRef = useRef<number>(0);
   const preScanCompletedRef = useRef<number>(0);
   const preScanAddedCountRef = useRef<number>(0);
+  const preScanConflictCountRef = useRef<number>(0);
   const preScanKnownTermsRef = useRef<Set<string>>(new Set());
+  const preScanEntriesMapRef = useRef<Map<string, GlossaryEntry>>(new Map());
   const preScanAbortMapRef = useRef<Map<number, AbortController>>(new Map());
 
   // Inline Editing state for Glossary rows
@@ -813,10 +817,40 @@ export default function InstructionsGlossaryModal({
     const updated: GlossaryEntry = {
       ...entry,
       status: 'approved',
+      conflictWith: undefined,
       updatedAt: new Date().getTime(),
     };
     await onSaveGlossaryBulk([updated]);
     triggerGlossaryToast(`Đã duyệt mục từ "${entry.sourceTerm} => ${entry.targetTerm}"!`);
+  };
+
+  const handleResolveConflictChoice = async (
+    entry: GlossaryEntry,
+    chosenTarget: string
+  ) => {
+    const cleanChosen = chosenTarget.normalize('NFC').trim();
+    const otherTargets = [
+      entry.targetTerm,
+      ...(entry.conflictWith || []),
+    ]
+      .map((t) => t.replace(/\s*\(Ch\..*?\)\s*$/, '').normalize('NFC').trim())
+      .filter((t) => t && t.toLowerCase() !== cleanChosen.toLowerCase());
+    const mergedForbidden = Array.from(
+      new Set([...(entry.forbiddenTranslations || []), ...otherTargets])
+    );
+    const updated: GlossaryEntry = {
+      ...entry,
+      targetTerm: cleanChosen,
+      forbiddenTranslations:
+        mergedForbidden.length > 0 ? mergedForbidden : undefined,
+      conflictWith: undefined,
+      status: 'approved',
+      updatedAt: new Date().getTime(),
+    };
+    await onSaveGlossaryBulk([updated]);
+    triggerGlossaryToast(
+      `Đã chốt "${entry.sourceTerm} => ${cleanChosen}" & đưa phương án lệch vào danh sách cấm dịch!`
+    );
   };
 
   const handleApproveAllDraftEntries = async () => {
@@ -826,6 +860,7 @@ export default function InstructionsGlossaryModal({
     const approvedList = drafts.map((g) => ({
       ...g,
       status: 'approved' as const,
+      conflictWith: undefined,
       updatedAt: now,
     }));
     await onSaveGlossaryBulk(approvedList);
@@ -878,6 +913,7 @@ export default function InstructionsGlossaryModal({
       chapterFrom: !Number.isNaN(chFrom) && chFrom > 0 ? chFrom : undefined,
       chapterTo: !Number.isNaN(chTo) && chTo > 0 ? chTo : undefined,
       notes: editNotes.trim(),
+      conflictWith: undefined,
       status: 'approved',
       pinned: editPinned,
       updatedAt: new Date().getTime(),
@@ -1385,6 +1421,9 @@ export default function InstructionsGlossaryModal({
       firstChapter: g.firstChapter,
       category: g.category,
       notes: g.notes || '',
+      evidence: g.evidence,
+      confidence: g.confidence,
+      conflictWith: g.conflictWith,
       status: g.status || 'approved',
       pinned: Boolean(g.pinned),
       enabled: g.enabled !== false,
@@ -1494,9 +1533,12 @@ export default function InstructionsGlossaryModal({
               sourceTerm?: string;
               targetTerm?: string;
               aliases?: string[];
+              forbiddenTranslations?: string[];
               policy?: GlossaryPolicy;
               category?: GlossaryCategory;
               notes?: string;
+              evidence?: string;
+              confidence?: number;
             }>;
             modelUsed?: string;
             keyUsed?: number;
@@ -1549,66 +1591,191 @@ export default function InstructionsGlossaryModal({
             );
           }
 
-          // Principle #5: AI never overwrites approved terms or known aliases
-          const uniqueBatch: GlossaryEntry[] = [];
+          // Principle #5: AI never overwrites approved terms, while merging new aliases & detecting parallel translation conflicts
+          const entriesToSaveMap = new Map<string, GlossaryEntry>();
+          let addedInChunk = 0;
+          let conflictsInChunk = 0;
           const returnedTerms = Array.isArray(data.terms) ? data.terms : [];
+
           returnedTerms.forEach(
             (
               t: {
                 sourceTerm?: string;
                 targetTerm?: string;
                 aliases?: string[];
+                forbiddenTranslations?: string[];
                 policy?: GlossaryPolicy;
                 category?: GlossaryCategory;
                 notes?: string;
+                evidence?: string;
+                confidence?: number;
               },
               i: number
             ) => {
               const src = (t.sourceTerm || '').normalize('NFC').trim();
               const tgt = (t.targetTerm || '').normalize('NFC').trim();
               if (!src || !tgt) return;
-              if (preScanKnownTermsRef.current.has(src)) return;
 
-              const cleanAliases = Array.isArray(t.aliases)
+              const rawAliases = Array.isArray(t.aliases)
                 ? t.aliases
                     .map((a) => String(a || '').normalize('NFC').trim())
-                    .filter((a) => a && a !== src && !preScanKnownTermsRef.current.has(a))
+                    .filter((a) => a && a !== src)
                 : [];
+              const rawForbidden = Array.isArray(t.forbiddenTranslations)
+                ? t.forbiddenTranslations
+                    .map((f) => String(f || '').normalize('NFC').trim())
+                    .filter((f) => f && f.toLowerCase() !== tgt.toLowerCase())
+                : [];
+              const cleanEvidence = (t.evidence || '').normalize('NFC').trim();
+              const cleanConfidence =
+                typeof t.confidence === 'number' && Number.isFinite(t.confidence)
+                  ? Math.max(0, Math.min(1, Number(t.confidence.toFixed(2))))
+                  : undefined;
 
-              preScanKnownTermsRef.current.add(src);
-              cleanAliases.forEach((a) => preScanKnownTermsRef.current.add(a));
+              const existing =
+                preScanEntriesMapRef.current.get(src) ||
+                rawAliases
+                  .map((a) => preScanEntriesMapRef.current.get(a))
+                  .find(Boolean);
 
-              uniqueBatch.push({
+              if (existing) {
+                const existingForms = new Set(getEntrySourceForms(existing));
+                const candidateAliases = [
+                  ...(src !== existing.sourceTerm ? [src] : []),
+                  ...rawAliases,
+                ].filter((a) => a && !existingForms.has(a));
+
+                const isConflict =
+                  existing.targetTerm.normalize('NFC').trim().toLowerCase() !==
+                  tgt.toLowerCase();
+
+                const existingConflictTargets = new Set(
+                  (existing.conflictWith || []).map((c) =>
+                    c.replace(/\s*\(Ch\..*?\)\s*$/, '').normalize('NFC').trim().toLowerCase()
+                  )
+                );
+                const isNewConflict =
+                  isConflict && !existingConflictTargets.has(tgt.toLowerCase());
+
+                const canMergeDraftExtras = existing.status === 'draft';
+                const mergedAliases = canMergeDraftExtras
+                  ? Array.from(
+                      new Set([...(existing.aliases || []), ...candidateAliases])
+                    ).filter((a) => a && a !== existing.sourceTerm)
+                  : existing.aliases;
+                const mergedForbidden = canMergeDraftExtras
+                  ? Array.from(
+                      new Set([
+                        ...(existing.forbiddenTranslations || []),
+                        ...rawForbidden,
+                      ])
+                    ).filter(
+                      (f) =>
+                        f &&
+                        f.toLowerCase() !==
+                          existing.targetTerm.normalize('NFC').trim().toLowerCase()
+                    )
+                  : existing.forbiddenTranslations;
+                const mergedConflictWith = isNewConflict
+                  ? Array.from(
+                      new Set([
+                        ...(existing.conflictWith || []),
+                        `${tgt} (${chapterRangeLabel})`,
+                      ])
+                    )
+                  : existing.conflictWith;
+
+                if (
+                  (canMergeDraftExtras &&
+                    (candidateAliases.length > 0 || rawForbidden.length > 0)) ||
+                  isNewConflict ||
+                  (!existing.evidence && cleanEvidence)
+                ) {
+                  const updatedExisting: GlossaryEntry = {
+                    ...existing,
+                    aliases:
+                      mergedAliases && mergedAliases.length > 0
+                        ? mergedAliases
+                        : undefined,
+                    forbiddenTranslations:
+                      mergedForbidden && mergedForbidden.length > 0
+                        ? mergedForbidden
+                        : undefined,
+                    evidence: existing.evidence || cleanEvidence || undefined,
+                    confidence:
+                      existing.confidence !== undefined && cleanConfidence !== undefined
+                        ? Math.max(existing.confidence, cleanConfidence)
+                        : existing.confidence ?? cleanConfidence,
+                    conflictWith: mergedConflictWith,
+                    updatedAt: Date.now(),
+                  };
+
+                  getEntrySourceForms(updatedExisting).forEach((f) => {
+                    preScanKnownTermsRef.current.add(f);
+                    preScanEntriesMapRef.current.set(f, updatedExisting);
+                  });
+                  entriesToSaveMap.set(updatedExisting.id, updatedExisting);
+
+                  if (isNewConflict) {
+                    conflictsInChunk += 1;
+                    preScanConflictCountRef.current += 1;
+                  }
+                }
+                return;
+              }
+
+              const cleanAliases = rawAliases.filter(
+                (a) => !preScanKnownTermsRef.current.has(a)
+              );
+
+              const newEntry: GlossaryEntry = {
                 id: `gl-prescan-${Date.now()}-${chunkIdx}-${i}`,
                 novelId,
                 sourceTerm: src,
                 targetTerm: tgt,
                 aliases: cleanAliases.length > 0 ? cleanAliases : undefined,
+                forbiddenTranslations:
+                  rawForbidden.length > 0 ? rawForbidden : undefined,
                 policy: t.policy || 'force',
                 firstChapter: firstChapterNum,
                 category: t.category || 'character',
                 notes: (t.notes || '').trim(),
+                evidence: cleanEvidence || undefined,
+                confidence: cleanConfidence,
                 status: 'draft',
                 enabled: true,
                 source: 'ai',
                 updatedAt: Date.now(),
+              };
+
+              preScanKnownTermsRef.current.add(src);
+              preScanEntriesMapRef.current.set(src, newEntry);
+              cleanAliases.forEach((a) => {
+                preScanKnownTermsRef.current.add(a);
+                preScanEntriesMapRef.current.set(a, newEntry);
               });
+
+              entriesToSaveMap.set(newEntry.id, newEntry);
+              addedInChunk += 1;
             }
           );
 
-          if (uniqueBatch.length > 0) {
-            preScanAddedCountRef.current += uniqueBatch.length;
-            await onSaveGlossaryBulk(uniqueBatch);
+          const batchToSave = Array.from(entriesToSaveMap.values());
+          if (batchToSave.length > 0) {
+            preScanAddedCountRef.current += addedInChunk;
+            await onSaveGlossaryBulk(batchToSave);
           }
 
           logger.info(
             'GLOSSARY_SCAN',
-            `[Worker] Gói ${chunkIdx + 1}/${chunks.length} (${chapterRangeLabel}) hoàn tất: AI trả ${returnedTerms.length} mục → lọc trùng còn +${uniqueBatch.length} mục mới`,
+            `[Worker] Gói ${chunkIdx + 1}/${chunks.length} (${chapterRangeLabel}) hoàn tất: AI trả ${returnedTerms.length} mục → thêm mới +${addedInChunk} mục${conflictsInChunk > 0 ? `, phát hiện ${conflictsInChunk} xung đột bản dịch` : ''}`,
             {
               chunkIndex: chunkIdx + 1,
               returnedCount: returnedTerms.length,
-              addedUniqueCount: uniqueBatch.length,
+              addedUniqueCount: addedInChunk,
+              conflictsInChunk,
               totalAddedSoFar: preScanAddedCountRef.current,
+              totalConflictsSoFar: preScanConflictCountRef.current,
               modelUsed: data.modelUsed,
               keyUsed: data.keyUsed,
               durationMs: res.durationMs,
@@ -1621,6 +1788,7 @@ export default function InstructionsGlossaryModal({
             ...prev,
             completedChunks: preScanCompletedRef.current,
             newTermsAdded: preScanAddedCountRef.current,
+            conflictsDetected: preScanConflictCountRef.current,
             lastModelUsed: data.modelUsed || modelConfig.selectedModel,
             lastKeyUsed:
               typeof data.keyUsed === 'number' ? data.keyUsed : prev.lastKeyUsed,
@@ -1679,7 +1847,11 @@ export default function InstructionsGlossaryModal({
         `Hoàn tất toàn bộ tiến trình Quét Dựng Từ Điển! Đã thêm +${preScanAddedCountRef.current} thuật ngữ mới trên ${chunks.length} gói.`
       );
       triggerGlossaryToast(
-        `Hoàn tất Quét Dựng Từ Điển Trước Khi Dịch! Đã bổ sung +${preScanAddedCountRef.current} thuật ngữ mới (Không ghi đè dữ liệu đã duyệt).`
+        `Hoàn tất Quét Dựng Từ Điển Trước Khi Dịch! Đã bổ sung +${preScanAddedCountRef.current} thuật ngữ mới${
+          preScanConflictCountRef.current > 0
+            ? ` (Phát hiện ${preScanConflictCountRef.current} mục xung đột bản dịch cần rà soát)`
+            : ' (Không ghi đè dữ liệu đã duyệt)'
+        }.`
       );
     }
   };
@@ -1718,11 +1890,17 @@ export default function InstructionsGlossaryModal({
     preScanCursorRef.current = 0;
     preScanCompletedRef.current = 0;
     preScanAddedCountRef.current = 0;
+    preScanConflictCountRef.current = 0;
     const knownSet = new Set<string>();
+    const entriesMap = new Map<string, GlossaryEntry>();
     glossary.forEach((g) => {
-      getEntrySourceForms(g).forEach((f) => knownSet.add(f));
+      getEntrySourceForms(g).forEach((f) => {
+        knownSet.add(f);
+        entriesMap.set(f, g);
+      });
     });
     preScanKnownTermsRef.current = knownSet;
+    preScanEntriesMapRef.current = entriesMap;
     setExtractError(null);
     preScanStatusRef.current = 'running';
     setPreScanStatus('running');
@@ -1731,6 +1909,7 @@ export default function InstructionsGlossaryModal({
       totalChunks: chunks.length,
       totalChapters: targets.length,
       newTermsAdded: 0,
+      conflictsDetected: 0,
       activeWorkers: 0,
     });
 
@@ -1788,6 +1967,9 @@ export default function InstructionsGlossaryModal({
   const pinnedGlossaryCount = glossary.filter((g) => g.pinned).length;
   const aiScannedGlossaryCount = glossary.filter((g) => g.source === 'ai').length;
   const draftGlossaryCount = glossary.filter((g) => g.status === 'draft').length;
+  const conflictGlossaryCount = glossary.filter(
+    (g) => g.conflictWith && g.conflictWith.length > 0
+  ).length;
   const rawChaptersCount = chapters.filter((c) => c.status === 'raw').length;
   const preScanTargetPreviewCount = getPreScanTargetChapters().length;
 
@@ -1807,6 +1989,12 @@ export default function InstructionsGlossaryModal({
     if (glossaryScopeFilter === 'draft' && g.status !== 'draft') {
       return false;
     }
+    if (
+      glossaryScopeFilter === 'conflict' &&
+      (!g.conflictWith || g.conflictWith.length === 0)
+    ) {
+      return false;
+    }
     if (categoryFilter !== 'all' && g.category !== categoryFilter) return false;
     if (!glossarySearch.trim()) return true;
     const q = glossarySearch.toLowerCase();
@@ -1814,12 +2002,14 @@ export default function InstructionsGlossaryModal({
     const forbiddenMatch = (g.forbiddenTranslations || []).some((f) =>
       f.toLowerCase().includes(q)
     );
+    const evidenceMatch = (g.evidence || '').toLowerCase().includes(q);
     return (
       g.sourceTerm.toLowerCase().includes(q) ||
       g.targetTerm.toLowerCase().includes(q) ||
       g.notes.toLowerCase().includes(q) ||
       aliasMatch ||
-      forbiddenMatch
+      forbiddenMatch ||
+      evidenceMatch
     );
   });
 
@@ -2489,7 +2679,7 @@ export default function InstructionsGlossaryModal({
                 {(preScanStatus !== 'idle' || preScanProgress.newTermsAdded > 0) && (
                   <div className="rounded-lg border border-[#E5DEC9] bg-white p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                      <div className="flex items-center gap-2 font-semibold text-[#1C1917]">
+                      <div className="flex flex-wrap items-center gap-2 font-semibold text-[#1C1917]">
                         <span>
                           {preScanStatus === 'running'
                             ? `Đang quét gói ${preScanProgress.completedChunks}/${preScanProgress.totalChunks} (${preScanProgress.totalChapters} chương) • ${preScanProgress.activeWorkers} luồng đang chạy`
@@ -2500,6 +2690,17 @@ export default function InstructionsGlossaryModal({
                         <span className="rounded bg-[#1E6F50]/15 px-2 py-0.5 font-mono text-[11px] font-bold text-[#1E6F50]">
                           +{preScanProgress.newTermsAdded} thuật ngữ mới
                         </span>
+                        {preScanProgress.conflictsDetected > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setGlossaryScopeFilter('conflict')}
+                            className="inline-flex items-center gap-1 rounded bg-amber-100 px-2 py-0.5 font-mono text-[11px] font-bold text-amber-900 hover:bg-amber-200"
+                            title="Bấm để lọc riêng các mục có xung đột bản dịch giữa các luồng quét"
+                          >
+                            <AlertTriangle className="h-3 w-3 text-amber-700" />
+                            {preScanProgress.conflictsDetected} xung đột đa luồng
+                          </button>
+                        )}
                         {preScanProgress.lastModelUsed && (
                           <span className="rounded bg-[#8C2D19]/12 px-2 py-0.5 font-mono text-[10px] font-bold text-[#8C2D19]">
                             {preScanProgress.lastModelUsed}
@@ -2847,6 +3048,21 @@ export default function InstructionsGlossaryModal({
                   >
                     Chờ duyệt ({draftGlossaryCount})
                   </button>
+                  {conflictGlossaryCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setGlossaryScopeFilter('conflict')}
+                      className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-bold transition ${
+                        glossaryScopeFilter === 'conflict'
+                          ? 'bg-red-700 text-white'
+                          : 'bg-red-100 text-red-800 hover:bg-red-200'
+                      }`}
+                      title="Các thuật ngữ có nhiều phương án dịch khác nhau phát hiện khi quét đa luồng song song"
+                    >
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                      Xung đột ({conflictGlossaryCount})
+                    </button>
+                  )}
                 </div>
 
                 <div className="flex flex-wrap items-center gap-1.5">
@@ -3138,6 +3354,9 @@ export default function InstructionsGlossaryModal({
                               {item.source === 'ai' && (
                                 <span className="rounded bg-[#8C2D19]/10 px-1.5 py-0.5 font-sans text-[9px] font-bold text-[#8C2D19]">
                                   AI
+                                  {typeof item.confidence === 'number'
+                                    ? ` ${Math.round(item.confidence * 100)}%`
+                                    : ''}
                                 </span>
                               )}
                               {item.status === 'draft' && (
@@ -3151,17 +3370,57 @@ export default function InstructionsGlossaryModal({
                             </div>
                           </td>
                           <td className="px-3 py-2">
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <span className="font-semibold text-[#8C2D19]">
-                                {item.targetTerm}
-                              </span>
-                              {itemPolicy !== 'force' && (
-                                <span
-                                  className={`rounded px-1.5 py-0.5 text-[9px] font-bold ${policyMeta.badgeClass}`}
-                                  title={policyMeta.label}
-                                >
-                                  {policyMeta.label}
+                            <div className="space-y-1">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span className="font-semibold text-[#8C2D19]">
+                                  {item.targetTerm}
                                 </span>
+                                {itemPolicy !== 'force' && (
+                                  <span
+                                    className={`rounded px-1.5 py-0.5 text-[9px] font-bold ${policyMeta.badgeClass}`}
+                                    title={policyMeta.label}
+                                  >
+                                    {policyMeta.label}
+                                  </span>
+                                )}
+                              </div>
+                              {item.conflictWith && item.conflictWith.length > 0 && (
+                                <div className="rounded-md border border-amber-300 bg-amber-50 p-1.5 text-[10px] text-amber-950">
+                                  <div className="mb-1 flex items-center gap-1 font-bold text-red-700">
+                                    <AlertTriangle className="h-3 w-3 shrink-0" />
+                                    <span>Xung đột đa luồng — Bấm chọn phương án chốt:</span>
+                                  </div>
+                                  <div className="flex flex-wrap gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handleResolveConflictChoice(item, item.targetTerm)
+                                      }
+                                      className="rounded border border-[#1E6F50]/40 bg-[#1E6F50]/12 px-1.5 py-0.5 font-bold text-[#1E6F50] hover:bg-[#1E6F50] hover:text-white"
+                                      title="Giữ bản dịch này và đưa các bản lệch sang danh sách cấm dịch"
+                                    >
+                                      Giữ &ldquo;{item.targetTerm}&rdquo;
+                                    </button>
+                                    {item.conflictWith.map((altLabel, cIdx) => {
+                                      const cleanAlt = altLabel
+                                        .replace(/\s*\(Ch\..*?\)\s*$/, '')
+                                        .trim();
+                                      return (
+                                        <button
+                                          key={cIdx}
+                                          type="button"
+                                          onClick={() =>
+                                            handleResolveConflictChoice(item, cleanAlt)
+                                          }
+                                          className="rounded border border-[#8C2D19]/40 bg-white px-1.5 py-0.5 font-semibold text-[#8C2D19] hover:bg-[#8C2D19] hover:text-white"
+                                          title={`Chuyển sang dùng "${cleanAlt}" và đưa "${item.targetTerm}" vào danh sách cấm dịch`}
+                                        >
+                                          Dùng &ldquo;{altLabel}&rdquo;
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
                               )}
                             </div>
                           </td>
@@ -3194,6 +3453,11 @@ export default function InstructionsGlossaryModal({
                           <td className="px-3 py-2 text-[#605A52]">
                             <div className="space-y-0.5">
                               {item.notes && <div>{item.notes}</div>}
+                              {item.evidence && (
+                                <div className="font-serif text-[11px] italic text-[#57534E]">
+                                  Trích nguyên tác: 「{item.evidence}」
+                                </div>
+                              )}
                               {item.forbiddenTranslations &&
                                 item.forbiddenTranslations.length > 0 && (
                                   <div className="flex flex-wrap items-center gap-1">

@@ -168,6 +168,9 @@ export interface GlossaryEntry {
   chapterTo?: number; // Hiệu lực đến chương Y (Temporal Terminology)
   firstChapter?: number; // Chương xuất hiện lần đầu
   status?: GlossaryApprovalStatus; // 'approved' (mặc định) | 'draft' (chờ duyệt từ AI Pre-Scan)
+  confidence?: number; // Độ tin cậy AI Pre-Scan (0.0 - 1.0)
+  evidence?: string; // Câu/cụm bằng chứng ngắn trích từ nguyên tác (10-35 chữ Hán)
+  conflictWith?: string[]; // Các phương án dịch xung đột phát hiện khi quét đa luồng song song
   enabled?: boolean; // default true for individual entry; whole table is gated by includeGlossary (default FALSE)
   pinned?: boolean; // If true, always injected when includeGlossary is enabled (for main characters / core pronoun rules)
   source?: 'manual' | 'ai'; // Track whether term was added manually or discovered via Pre-Scan AI
