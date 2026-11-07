@@ -96,7 +96,10 @@ export function serializeBodyBlocksToContent(
   trimEdges = false
 ): string {
   const sanitized = bodyParagraphs.map((p) => {
-    const base = (p || '').replace(/\u200B/g, '').replace(/\r?\n+/g, ' ');
+    const base = (p || '')
+      .replace(/\u200B/g, '')
+      .replace(/\r\n/g, '\n')
+      .replace(/\n[ \t]*\n+/g, '\n');
     return trimEdges ? base.trim() : base;
   });
   // If every single block is empty, return empty string
@@ -129,7 +132,14 @@ export function materializeBlocksToChapter(
   for (const item of returnedBlocks || []) {
     if (!item || typeof item.id !== 'string') continue;
     const id = item.id.trim();
-    const text = typeof item.translation === 'string' ? item.translation.trim() : '';
+    const rawText = typeof item.translation === 'string' ? item.translation : '';
+    const text =
+      id === 'TITLE'
+        ? rawText.replace(/\r?\n+/g, ' ').trim()
+        : rawText
+            .replace(/\r\n/g, '\n')
+            .replace(/\n[ \t]*\n+/g, '\n')
+            .trim();
     if (map.has(id)) {
       duplicateIds.push(id);
     }

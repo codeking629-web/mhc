@@ -1325,9 +1325,26 @@ export function buildInteractionGenerationConfig(
 }
 
 /**
+ * Builds the official `@google/genai` `TextResponseFormat` (`response_format`) payload
+ * for `ai.interactions.create` structured JSON outputs:
+ * `{ type: 'text', mime_type: 'application/json', schema }`.
+ */
+export function buildJsonResponseFormat(schema: Record<string, unknown>): {
+  type: 'text';
+  mime_type: 'application/json';
+  schema: Record<string, unknown>;
+} {
+  return {
+    type: 'text',
+    mime_type: 'application/json',
+    schema,
+  };
+}
+
+/**
  * Extracts output text from a Gemini Interactions API response (`ai.interactions.create`).
- * Prefers `interaction.output_text` (populated by @google/genai SDK >= 2.31.0)
- * and falls back to concatenating text content from `model_output` steps.
+ * Prefers `interaction.output_text` (populated by @google/genai SDK >= 2.16.0)
+ * and falls back to concatenating text content from `model_output` steps or legacy `outputs`.
  */
 export function extractInteractionText(interaction: {
   output_text?: string | null;
@@ -1336,6 +1353,10 @@ export function extractInteractionText(interaction: {
     content?:
       | Array<{ type?: string; text?: string }>
       | { type?: string; text?: string };
+  }>;
+  outputs?: Array<{
+    type?: string;
+    text?: string;
   }>;
 }): string {
   if (
@@ -1360,6 +1381,14 @@ export function extractInteractionText(interaction: {
     }
     if (chunks.length > 0) {
       return chunks.join('');
+    }
+  }
+  if (Array.isArray(interaction?.outputs)) {
+    const legacyChunks = interaction.outputs
+      .filter((item) => item?.type === 'text' && typeof item.text === 'string')
+      .map((item) => item.text as string);
+    if (legacyChunks.length > 0) {
+      return legacyChunks.join('');
     }
   }
   return '';

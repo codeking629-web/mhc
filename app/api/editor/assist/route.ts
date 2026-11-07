@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   buildInteractionGenerationConfig,
+  buildJsonResponseFormat,
   createWire1HeartbeatStream,
   extractInteractionText,
   geminiKeyPool,
@@ -165,15 +166,18 @@ export async function POST(req: NextRequest) {
         glossaryNote = contextual.promptSection;
       }
 
-      const editorialPersonaNote = systemInstruction.trim()
-        ? `\n[CHỈ DẪN BIÊN TẬP CỦA DỰ ÁN]:\n${systemInstruction.trim()}`
+      const baseEditorialInstruction = systemInstruction.trim()
+        ? systemInstruction.trim()
+        : `Bạn là Biên Tập Viên Tiểu Thuyết Trung - Việt cao cấp của Mặc Hương Các Studio.
+Quy tắc bắt buộc:
+- Biên tập, dịch bù chữ Hán sót, khử từ tiếng Anh lọt vào câu ('But', 'however', 'and'...) và chuốt văn phong tiếng Việt mượt mà.
+- Không tự ý cắt bỏ tình tiết, giữ nguyên bố cục đoạn văn theo yêu cầu.`;
+
+      const pronounNote = pronounRule.trim()
+        ? `\n\n[QUY TẮC XƯNG HÔ ÁP DỤNG]: ${pronounRule.trim()}`
         : '';
 
-      const systemPrompt = `Bạn là Biên Tập Viên Tiểu Thuyết Trung - Việt cao cấp của Mặc Hương Các Studio.
-Quy tắc bắt buộc:
-- Biên tập, dịch bù chữ Hán sót, khử từ tiếng Anh lọt vào câu ('but', 'however', 'and'...) và chuốt văn phong tiếng Việt mượt mà.
-- Không tự ý cắt bỏ tình tiết, giữ nguyên bố cục đoạn văn theo yêu cầu.
-- Quy tắc xưng hô áp dụng: ${pronounRule || 'Theo đúng ngữ cảnh cổ trang / tiên hiệp'}.${editorialPersonaNote}${glossaryNote}`;
+      const systemPrompt = `${baseEditorialInstruction}${pronounNote}${glossaryNote}`;
 
       // MODE 0: Full-Chapter Re-Alignment & Editorial (`realign_chapter` — used when chapter has QA Block Misalignment or Full-Chapter Structured Polish)
       if (action === 'realign_chapter') {
@@ -198,14 +202,15 @@ Quy tắc bắt buộc:
 
         const fullRealignSystemPrompt = `${systemPrompt}
 
-QUY TẮC BẮT BUỘC KHI BIÊN TẬP & CĂN CHỈNH LẠI TOÀN CHƯƠNG (CHAPTER-REALIGN-BLOCKS-V1):
+[GIAO THỨC BIÊN TẬP & CĂN CHỈNH LẠI TOÀN CHƯƠNG — CHAPTER-REALIGN-BLOCKS-V1]:
 1. Chương này đang được gửi TOÀN BỘ (gồm danh sách "rawBlocks" nguyên tác tiếng Trung có mã cố định "TITLE", "P0001".."P${String(rawBodyCount).padStart(4, '0')}" và bản dịch tiếng Việt hiện có "existingVietnameseDraft").
 2. Lý do gửi cả chương: Bản dịch tiếng Việt hiện tại có ${draftParagraphs.length} đoạn trong khi nguyên tác có ${rawBodyCount} đoạn (bị lệch nhịp đoạn ở giữa/cuối chương), hoặc cần biên tập đồng bộ toàn chương.
 3. Nhiệm vụ của bạn:
    - Đối chiếu toàn bộ "rawBlocks" với "existingVietnameseDraft" từ đầu đến cuối chương.
    - Tận dụng tối đa câu chữ, từ vựng và văn phong đã dịch tốt trong "existingVietnameseDraft", nhưng PHÂN BỔ LẠI (tách đoạn bị gộp, gộp đoạn bị tách thừa, hoặc dịch bù phần nguyên tác bị bỏ sót) sao cho kết quả trả về khớp CHÍNH XÁC 1:1 với từng mã "id" ("TITLE", "P0001", "P0002"...) của "rawBlocks".
-   - TUYỆT ĐỐI KHÔNG dịch lặp lại nội dung ở cuối chương, KHÔNG bỏ sót hay thêm bớt bất kỳ mã ID nào.
-   - Dọn sạch 100% chữ Hán còn sót, xóa từ tiếng Anh chêm sai ('but', 'however', 'and'...) và chuốt mượt câu văn tiếng Việt. Mỗi "translation" là 1 đoạn duy nhất không chứa ký tự xuống dòng (\\n).`;
+   - Chỉ trả về object JSON hợp lệ đúng schema: {"blocks":[{"id":"TITLE","translation":"Chương N: Tên chương"},{"id":"P0001","translation":"Nội dung hoàn chỉnh của P0001"}]}.
+   - TUYỆT ĐỐI KHÔNG dịch lặp lại nội dung ở cuối chương, KHÔNG bỏ sót hay thêm bớt bất kỳ mã ID nào, mỗi phần tử chỉ gồm 2 trường "id" và "translation".
+   - Dọn sạch 100% chữ Hán còn sót, xử lý câu/từ tiếng Anh lọt ('But', 'however', 'and'...) và chuốt mượt câu văn tiếng Việt. "TITLE" chỉ chứa 1 dòng tiêu đề; các block thân chương không chèn dòng trống (\\n\\n) tách đôi block (chỉ dùng \\n đơn khi giữ bố cục thơ, bảng hệ thống, danh sách).`;
 
         const wirePayload = JSON.stringify(
           {
@@ -257,11 +262,13 @@ QUY TẮC BẮT BUỘC KHI BIÊN TẬP & CĂN CHỈNH LẠI TOÀN CHƯƠNG (CHAP
                 resolvedThinkingLevel,
                 { temperature: 0.25 }
               ),
-              response_format: {
+              response_format: buildJsonResponseFormat({
                 type: 'object',
                 properties: {
                   blocks: {
                     type: 'array',
+                    minItems: expectedBlockIds.length,
+                    maxItems: expectedBlockIds.length,
                     description:
                       'Danh sách đầy đủ các block đã biên tập và căn chỉnh 1:1 theo đúng thứ tự rawBlocks (bắt đầu bằng TITLE, tiếp theo là P0001, P0002...).',
                     items: {
@@ -271,7 +278,7 @@ QUY TẮC BẮT BUỘC KHI BIÊN TẬP & CĂN CHỈNH LẠI TOÀN CHƯƠNG (CHAP
                         translation: {
                           type: 'string',
                           description:
-                            'Bản tiếng Việt đã căn chỉnh đúng vị trí ID và biên tập sạch chữ Hán / lỗi QA (1 đoạn duy nhất, không chứa ký tự xuống dòng).',
+                            'Bản tiếng Việt hoàn chỉnh đã căn chỉnh đúng vị trí ID và biên tập sạch chữ Hán / lỗi QA; TITLE là một dòng Chương N: ...',
                         },
                       },
                       required: ['id', 'translation'],
@@ -281,7 +288,7 @@ QUY TẮC BẮT BUỘC KHI BIÊN TẬP & CĂN CHỈNH LẠI TOÀN CHƯƠNG (CHAP
                 },
                 required: ['blocks'],
                 additionalProperties: false,
-              },
+              }),
             });
           },
           selectedModel,
@@ -299,12 +306,20 @@ QUY TẮC BẮT BUỘC KHI BIÊN TẬP & CĂN CHỈNH LẠI TOÀN CHƯƠNG (CHAP
           blocks?: Array<{ id: string; translation: string }>;
         }>(extractInteractionText(interaction), `RealignChapter[${reqId}]`);
 
-        const cleanedBlocks = (rawJson.blocks || []).map((b) => ({
-          id: String(b.id || '').trim(),
-          translation: normalizeVietnameseText(String(b.translation || ''))
-            .replace(/\r?\n+/g, ' ')
-            .trim(),
-        }));
+        const cleanedBlocks = (rawJson.blocks || []).map((b) => {
+          const id = String(b.id || '').trim();
+          const normalized = normalizeVietnameseText(String(b.translation || ''));
+          return {
+            id,
+            translation:
+              id === 'TITLE'
+                ? normalized.replace(/\r?\n+/g, ' ').trim()
+                : normalized
+                    .replace(/\r\n/g, '\n')
+                    .replace(/\n[ \t]*\n+/g, '\n')
+                    .trim(),
+          };
+        });
 
         const materialized = materializeBlocksToChapter(
           cleanedBlocks,
@@ -387,7 +402,7 @@ QUY TẮC BẮT BUỘC KHI BIÊN TẬP & CĂN CHỈNH LẠI TOÀN CHƯƠNG (CHAP
           {
             schema: 'block-cleanup-v1',
             instruction:
-              'Chỉ sửa các block nằm trong danh sách targets bên dưới. Loại bỏ triệt để chữ Hán còn sót, xóa từ tiếng Anh chêm sai (như "but", "however", "and"), dịch bù nếu draft đang trống dựa trên source tiếng Trung, và giữ nguyên văn mạch (prevDraft/nextDraft). Trả về đúng mã id của từng target.',
+              'Chỉ sửa các block nằm trong danh sách targets bên dưới. Loại bỏ triệt để chữ Hán còn sót, xử lý câu/từ tiếng Anh lọt (như "But", "however", "and"), dịch bù nếu draft đang trống dựa trên source tiếng Trung, và giữ nguyên văn mạch tham chiếu (contextBefore/contextAfter). Chỉ trả về {"updates":[{"id":"...","translation":"..."}]} khớp đúng danh sách id của targets.',
             targets,
           },
           null,
@@ -420,11 +435,13 @@ QUY TẮC BẮT BUỘC KHI BIÊN TẬP & CĂN CHỈNH LẠI TOÀN CHƯƠNG (CHAP
                 resolvedThinkingLevel,
                 { temperature: 0.2 }
               ),
-              response_format: {
+              response_format: buildJsonResponseFormat({
                 type: 'object',
                 properties: {
                   updates: {
                     type: 'array',
+                    minItems: targetIds.length,
+                    maxItems: targetIds.length,
                     description:
                       'Danh sách các block đã được làm sạch tương ứng 1:1 với các id trong targets.',
                     items: {
@@ -434,7 +451,7 @@ QUY TẮC BẮT BUỘC KHI BIÊN TẬP & CĂN CHỈNH LẠI TOÀN CHƯƠNG (CHAP
                         translation: {
                           type: 'string',
                           description:
-                            'Bản tiếng Việt hoàn chỉnh, sạch 100% Hán tự và từ tiếng Anh thừa, không xuống dòng.',
+                            'Bản tiếng Việt hoàn chỉnh của block này sau khi sửa, sạch 100% Hán tự và câu/từ tiếng Anh thừa.',
                         },
                       },
                       required: ['id', 'translation'],
@@ -444,7 +461,7 @@ QUY TẮC BẮT BUỘC KHI BIÊN TẬP & CĂN CHỈNH LẠI TOÀN CHƯƠNG (CHAP
                 },
                 required: ['updates'],
                 additionalProperties: false,
-              },
+              }),
             });
           },
           selectedModel,
@@ -461,12 +478,20 @@ QUY TẮC BẮT BUỘC KHI BIÊN TẬP & CĂN CHỈNH LẠI TOÀN CHƯƠNG (CHAP
         const rawJson = safeParseInteractionJson<{
           updates?: Array<{ id: string; translation: string }>;
         }>(extractInteractionText(interaction), `BlockCleanup[${reqId}]`);
-        const cleanedUpdates = (rawJson.updates || []).map((u) => ({
-          id: String(u.id || '').trim(),
-          translation: normalizeVietnameseText(String(u.translation || ''))
-            .replace(/\r?\n+/g, ' ')
-            .trim(),
-        }));
+        const cleanedUpdates = (rawJson.updates || []).map((u) => {
+          const id = String(u.id || '').trim();
+          const normalized = normalizeVietnameseText(String(u.translation || ''));
+          return {
+            id,
+            translation:
+              id === 'TITLE'
+                ? normalized.replace(/\r?\n+/g, ' ').trim()
+                : normalized
+                    .replace(/\r\n/g, '\n')
+                    .replace(/\n[ \t]*\n+/g, '\n')
+                    .trim(),
+          };
+        });
 
         const routeDurationMs = Date.now() - routeStartMs;
         const debugTrace: ServerDebugTrace = {
@@ -513,7 +538,7 @@ QUY TẮC BẮT BUỘC KHI BIÊN TẬP & CĂN CHỈNH LẠI TOÀN CHƯƠNG (CHAP
 
       // MODE 2: 3 Alternative Phrasings
       if (action === 'alternatives') {
-        const promptText = `Hãy đưa ra 3 phương án diễn đạt tiếng Việt khác nhau (1: Giàu chất cổ phong/tiên hiệp; 2: Tự nhiên, gãy gọn, hiện đại dễ đọc; 3: Giàu cảm xúc, nhấn mạnh khí thế/nội tâm) cho đoạn văn sau:
+        const promptText = `Hãy đưa ra 3 phương án diễn đạt tiếng Việt khác nhau (1: Giàu chất cổ phong/tiên hiệp; 2: Tự nhiên, gãy gọn, hiện đại dễ đọc; 3: Giàu cảm xúc, nhấn mạnh khí thế/nội tâm) cho đoạn văn sau. Chỉ trả về JSON {"alternatives":["Phương án 1","Phương án 2","Phương án 3"]}:
 
 [ĐOẠN VĂN CẦN GỢI Ý]:
 ${selectedText}
@@ -539,18 +564,20 @@ ${surroundingContext ? `[NGỮ CẢNH XUNG QUANH]:\n${surroundingContext}` : ''}
                 resolvedThinkingLevel,
                 { temperature: 0.65 }
               ),
-              response_format: {
+              response_format: buildJsonResponseFormat({
                 type: 'object',
                 properties: {
                   alternatives: {
                     type: 'array',
+                    minItems: 3,
+                    maxItems: 3,
                     items: { type: 'string' },
                     description: '3 phương án viết lại đoạn văn.',
                   },
                 },
                 required: ['alternatives'],
                 additionalProperties: false,
-              },
+              }),
             });
           },
           selectedModel,
@@ -608,10 +635,10 @@ ${surroundingContext ? `[NGỮ CẢNH XUNG QUANH]:\n${surroundingContext}` : ''}
         }" phù hợp ngữ cảnh nhân vật.`;
       } else if (action === 'fix_qa') {
         taskInstruction =
-          'Hãy quét và dịch sạch toàn bộ các chữ Hán (ký tự Trung Quốc) còn sót hoặc các từ tiếng Anh bị lọt vô duyên (như "but", "and", "however") trong văn bản dưới đây sang tiếng Việt tự nhiên. Giữ nguyên số dòng/đoạn.';
+          'Hãy quét và dịch sạch toàn bộ các chữ Hán (ký tự Trung Quốc) còn sót hoặc các từ tiếng Anh bị lọt vô duyên (như "But", "and", "however") trong văn bản dưới đây sang tiếng Việt tự nhiên. Giữ nguyên số dòng/đoạn.';
       } else if (action === 'translate_title') {
         taskInstruction =
-          'Hãy dịch tiêu đề chương này sang tiếng Việt thật hay, chuẩn phong cách tiểu thuyết (Định dạng: Chương X: Tên chương).';
+          'Hãy dịch tiêu đề chương này sang tiếng Việt thật hay, chuẩn phong cách tiểu thuyết (Định dạng: Chương N: Tên chương).';
       } else {
         taskInstruction =
           customPrompt.trim() ||
@@ -619,6 +646,7 @@ ${surroundingContext ? `[NGỮ CẢNH XUNG QUANH]:\n${surroundingContext}` : ''}
       }
 
       const promptText = `${taskInstruction}
+Chỉ trả về object JSON đúng schema: {"translation":"Toàn bộ nội dung đã biên tập hoàn chỉnh"}
 
 [VĂN BẢN CẦN XỬ LÝ]:
 ${selectedText}
@@ -644,17 +672,18 @@ ${surroundingContext ? `[NGỮ CẢNH XUNG QUANH]:\n${surroundingContext}` : ''}
               resolvedThinkingLevel,
               { temperature: 0.3 }
             ),
-            response_format: {
+            response_format: buildJsonResponseFormat({
               type: 'object',
               properties: {
-                editedText: {
+                translation: {
                   type: 'string',
-                  description: 'Văn bản sau khi đã biên tập hoàn chỉnh.',
+                  description:
+                    'Toàn bộ văn bản tiếng Việt sau khi đã biên tập hoàn chỉnh, giữ nguyên số đoạn và cấu trúc.',
                 },
               },
-              required: ['editedText'],
+              required: ['translation'],
               additionalProperties: false,
-            },
+            }),
           });
         },
         selectedModel,
@@ -669,6 +698,7 @@ ${surroundingContext ? `[NGỮ CẢNH XUNG QUANH]:\n${surroundingContext}` : ''}
       );
 
       const parsed = safeParseInteractionJson<{
+        translation?: string;
         editedText?: string;
       }>(extractInteractionText(interaction), `Assist:${action}[${reqId}]`);
 
@@ -676,7 +706,9 @@ ${surroundingContext ? `[NGỮ CẢNH XUNG QUANH]:\n${surroundingContext}` : ''}
       return {
         status: 200,
         body: {
-          resultText: normalizeVietnameseText(parsed.editedText || selectedText),
+          resultText: normalizeVietnameseText(
+            parsed.translation || parsed.editedText || selectedText
+          ),
           modelUsed,
           thinkingLevelUsed: resolvedThinkingLevel,
           didFallback,

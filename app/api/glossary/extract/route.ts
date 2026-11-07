@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   buildInteractionGenerationConfig,
+  buildJsonResponseFormat,
   createWire1HeartbeatStream,
   extractInteractionText,
   geminiKeyPool,
@@ -148,7 +149,7 @@ ${slicedInput}`;
               resolvedThinkingLevel,
               { temperature: 0.2 }
             ),
-            response_format: {
+            response_format: buildJsonResponseFormat({
               type: 'object',
               properties: {
                 terms: {
@@ -212,7 +213,7 @@ ${slicedInput}`;
               },
               required: ['terms'],
               additionalProperties: false,
-            },
+            }),
           });
         },
         selectedModel,
