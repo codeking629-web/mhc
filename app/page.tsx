@@ -421,6 +421,9 @@ export default function MacHuongCacStudioPage() {
   useEffect(() => {
     if (!activeChapterId) return;
     setActiveFocusedBlockId('TITLE');
+    setAiAlternatives([]);
+    setAiAlternativesBlockId(null);
+    setCustomAiBlockId(null);
     if (editorScrollContainerRef.current) {
       editorScrollContainerRef.current.scrollTop = 0;
     }

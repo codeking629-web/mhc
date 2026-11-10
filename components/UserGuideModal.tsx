@@ -111,30 +111,30 @@ const GUIDE_SECTIONS: GuideSection[] = [
   },
   {
     id: 'import',
-    title: '3. Nhập Nguyên Tác (4 Nguồn) & Nhập Bản Dịch Ngoài (.TXT)',
-    badge: 'Nhập liệu',
+    title: '3. Nhập Nguyên Tác (4 Nguồn, Tách Chương Thông Minh) & Bản Dịch Ngoài',
+    badge: 'Nhập & Tách chương',
     icon: <FileUp className="h-4 w-4" />,
     summary:
-      'Hỗ trợ 4 nguồn nhập chương nguyên tác tự động cấp mã thứ tự 4 chữ số (0000, 0001...) và công cụ Nhập bản dịch cả chương (.TXT) có bảng xem trước ghép đoạn 1:1.',
+      'Hỗ trợ 4 nguồn nhập chương nguyên tác (tích hợp Trình Tách Chương Thông Minh phân biệt nguồn bẩn/nguồn sạch, lọc mục lục TOC, tải ngay gói .ZIP), tự động giải mã đa bảng mã (UTF-8, GB18030/GBK, UTF-16LE) và nhập bản dịch ngoài (.TXT 1:1).',
     highlights: [
-      '4 nguồn nguyên tác: Nhiều file .TXT (XXXX_), sách .EPUB, tách 1 file .TXT gộp bằng Regex, hoặc Dán/Tải URL',
-      'Tự động giải mã bảng mã tiếng Trung UTF-8, GB18030 và GBK khi tải từ URL',
-      'Nhập bản dịch ngoài (.TXT) có bảng Preview đối chiếu từng đoạn TITLE, P0001..Pxxxx',
+      '4 nguồn nguyên tác: Thư mục/Gói .ZIP chương .TXT (XXXX_), sách .EPUB, Tách Chương Thông Minh / Regex, hoặc Dán/Tải URL',
+      'Trình Tách Chương Thông Minh: Tự bỏ qua Mục lục đầu sách, tách Lời mở đầu, xem trước 2 cột & tải ngay gói .ZIP',
+      'Giải mã bảng mã Auto / UTF-8 / GB18030 / GBK / UTF-16LE + Nhập bản dịch ngoài (.TXT) ghép đoạn 1:1',
     ],
     steps: [
       {
-        heading: '4 Phương thức Nhập Chương Nguyên Tác (Nút "Nhập Chương" ở cột trái)',
+        heading: '4 Phương thức Nhập & Tách Chương Nguyên Tác (Nút "Nhập Chương" ở cột trái)',
         items: [
-          'Tab 1 — Thư mục / Nhiều file .TXT: Chọn hàng trăm file .txt cùng lúc, tự động nhận diện tiền tố thứ tự chương (XXXX_) và tách dòng tiêu đề đầu tiên.',
+          'Tab 1 — Thư mục / Nhiều file .TXT / Gói .ZIP chứa .TXT: Chọn cả thư mục, hàng trăm file .txt hoặc 1 gói .zip, tự động nhận diện tiền tố thứ tự chương (XXXX_) và tách dòng tiêu đề đầu tiên.',
           'Tab 2 — Sách .EPUB nguyên tác: Đọc chuẩn cấu trúc container.xml -> .opf -> manifest & spine, giữ nguyên thứ tự chương mục của sách gốc.',
-          'Tab 3 — Tách 1 file .TXT gộp nhiều chương bằng Regex: Tích hợp mẫu Regex nhận diện "第...章/节/回/卷" hoặc "Chương/Hồi...", có Bảng Xem Trước (Preview) danh sách chương trước khi lưu.',
-          'Tab 4 — Dán văn bản hoặc Tải từ URL: Dán nội dung trực tiếp hoặc nhập URL chương truyện (hỗ trợ tự động giải mã UTF-8 / GB18030 / GBK).',
+          'Tab 3 — Tách 1 file .TXT gộp cả truyện (Trình Tách Chương Thông Minh + Regex): Chế độ "Tách Chương Thông Minh" tự động phân biệt nguồn bẩn/nguồn sạch, lọc bỏ danh sách Mục lục (TOC) đầu sách, tách riêng Lời mở đầu (0000_Lời mở đầu.txt), cho phép đọc thử từng chương bên phải và bấm "Tải gói .ZIP đã tách" ngay lập tức hoặc nhập thẳng vào bộ truyện.',
+          'Tab 4 — Dán văn bản hoặc Tải từ URL: Dán nội dung trực tiếp hoặc nhập URL chương truyện (tự động giải mã UTF-8 / GB18030 / GBK).',
         ],
       },
       {
         heading: 'Nhập Bản Dịch Ngoài Cả Chương (.TXT 1:1)',
         items: [
-          'Trong màn hình Biên tập bản dịch, nhấn nút "Nhập bản dịch (.TXT)" trên thanh công cụ chương.',
+          'Trong màn hình Biên tập bản dịch, nhấn nút "Nhập bản dịch cả chương" trên thanh công cụ.',
           'Chọn file .txt hoặc dán nội dung bản dịch có sẵn, bật/tắt tùy chọn "Tự động lấy dòng đầu làm Tiêu đề chương (TITLE)".',
           'Kiểm tra bảng Xem Trước Ghép Đoạn 1:1 (cảnh báo ngay nếu số đoạn tiếng Việt lệch với nguyên tác) rồi nhấn xác nhận áp dụng.',
         ],
@@ -143,68 +143,66 @@ const GUIDE_SECTIONS: GuideSection[] = [
   },
   {
     id: 'models_thinking_keys',
-    title: '4. Model Alias, Thinking Level & Bể 50 API Key',
+    title: '4. Model Alias, Thinking Level, Chống Timeout 300s & Bể 50 Key',
     badge: 'Thinking & 50 Keys',
     icon: <Cpu className="h-4 w-4" />,
     summary:
-      'Tự động lấy danh sách mức độ suy luận (minimal, low, medium, high — mặc định high) để tránh ngắt kết nối 300 giây, kết hợp Bể 50 API Key lưu bền vững vào dự án và công cụ Chẩn đoán 5 tuyến API.',
+      'Chuẩn hóa Structured Output (blocks-v1) theo tài liệu chính thức @google/genai, hỗ trợ 4 mức suy luận (minimal, low, medium, high — mặc định high), bảo vệ kép chống đứt kết nối 300 giây (Renew 240s + Heartbeat 15s) và Bể 50 API Key.',
     highlights: [
-      'Mức suy luận Thinking Level: minimal • low • medium • high (mặc định: high)',
-      'Chọn nhanh Thinking Level ngay tại thanh Hàng Đợi (cột trái) hoặc trong Preset & Model -> Tab 3',
-      'Bể 50 API Key lưu bền vững vào dự án (1 Luồng = 1 Key độc lập) + Nút Xóa sạch Key trước khi Public',
+      'Structured Output chuẩn SDK (response_format JSON Schema + khóa minItems/maxItems)',
+      'Bảo vệ kép chống Timeout 300s: Tự động làm mới ở giây 240 (renewWire1) + Luồng Nhịp Tim NDJSON 15s',
+      'Bể 50 API Key lưu bền vững (1 Luồng = 1 Key độc lập, không lưu cứng Key trong .env)',
     ],
     steps: [
       {
-        heading: 'Cơ chế Mức Độ Suy Luận (Thinking Level: minimal, low, medium, high)',
+        heading: 'Mức Độ Suy Luận (Thinking Level) & Bảo Vệ Kép Chống Timeout 300 Giây',
         items: [
-          'Hệ thống tự động lấy danh sách mức suy luận từ SDK/API (/api/models) gồm 4 mức: minimal (Tối giản — phản hồi tức thì), low (Thấp — nhanh), medium (Trung bình — cân bằng), và high (Cao — suy luận sâu).',
-          'Mặc định khi không chỉnh sửa, hệ thống luôn đặt ở mức "high" để đạt chất lượng dịch thuật và biên tập cao nhất.',
-          'Cách xử lý khi gặp chương dài bị ngắt kết nối cổng 300 giây (Gateway Timeout): Chuyển nhanh mức suy luận xuống "medium", "low" hoặc "minimal" ngay trên thanh chọn nhanh ở khung Hàng Đợi cột trái hoặc trong Tab 3 của cửa sổ Preset & Model.',
-          'Mức Thinking Level được áp dụng đồng bộ cho cả Dịch chương (/api/translate), Trợ lý Biên tập (/api/editor/assist) và Quét Từ điển (/api/glossary/extract).',
+          'Hệ thống hỗ trợ 4 mức suy luận chuẩn SDK: minimal (Tối giản — phản hồi tức thì), low (Thấp — nhanh), medium (Trung bình — cân bằng), và high (Cao — suy luận sâu, mặc định).',
+          'Cách 1 — Tự động làm mới ở giây 240 (renewWire1): Mỗi lượt gọi Gemini có ngưỡng an toàn 240 giây (trước trần 300s). Nếu mô hình suy nghĩ quá 240 giây, hệ thống chủ động mở lại kết nối mới / xoay sang Key tiếp theo.',
+          'Cách 2 — Luồng Nhịp Tim NDJSON (Heartbeat Stream 15s): Máy chủ gửi xung nhịp tim mỗi 15 giây về trình duyệt trong suốt lúc chờ AI suy luận, giữ kết nối HTTP luôn hoạt động và chống đứt cáp Sợi dây 1.',
+          'Mức Thinking Level có thể chuyển nhanh ngay tại khung Hàng Đợi cột trái hoặc trong Preset & Model -> Tab 3.',
         ],
       },
       {
         heading: 'Bể 50 API Key Lưu Bền Vững & Chẩn Đoán Toàn Diện',
         items: [
-          '1 Luồng = 1 Key Độc Lập: Dán tối đa 50 API Key (mỗi dòng 1 Key AIza...). Luồng #1 dùng Key #1, Luồng #2 dùng Key #2... giúp chạy đa luồng 1x–10x mượt mà không lo nghẽn hạn mức.',
-          'Lưu bền vững vào Dự án: Key được lưu đồng bộ vào tệp cấu hình dự án trên máy chủ và bộ nhớ trình duyệt. Trước khi chia sẻ hoặc Public dự án, nhấn nút "Xóa sạch Key" để gỡ toàn bộ Key an toàn.',
-          'Khóa cứng Model (Strict Model Lock) vs Auto-Fallback: Mặc định khóa cứng Model bạn chọn; khi bật Auto-Fallback, hệ thống mới chuyển sang gemini-3.1-flash-lite nếu toàn bộ Key chạm trần 429.',
+          'Bảo mật 100%: Không lưu cứng bất kỳ API Key nào trong .env hay mã nguồn; bạn tự quản lý danh sách tối đa 50 Key (1 Luồng = 1 Key độc lập) ngay trên giao diện.',
+          'Lưu bền vững & Xóa sạch Key 1-Click: Key được đồng bộ giữa máy chủ cục bộ và trình duyệt; nhấn "Xóa sạch Key" bất cứ lúc nào trước khi chia sẻ máy.',
           'Chẩn đoán Key & 5 Tuyến API + Xóa Cooldown 429: Kiểm tra sức khỏe từng Key và 5 tuyến API chỉ với 1 cú nhấp chuột, hoặc nhấn "Xóa Cooldown 429" để mở khóa ngay các Key đang chờ nghỉ.',
         ],
       },
     ],
     tips: [
-      'Khi dịch các chương siêu dài (trên 6.000–10.000 chữ Hán), chọn mức "medium" hoặc "low" giúp tốc độ trả về nhanh gấp 2–3 lần và loại bỏ hoàn toàn nguy cơ đứt kết nối 300 giây.',
+      'Nhờ cơ chế Heartbeat 15s kết hợp Renew 240s, bạn có thể yên tâm để mức suy luận "high" cho cả các chương dài mà không sợ lỗi đứt kết nối 300 giây.',
     ],
   },
   {
     id: 'glossary_prescan',
-    title: '5. Chỉ Dẫn Dịch (Preset), Từ Điển & Quét Tiền Kỳ Đa Luồng',
+    title: '5. 4 Preset Chuẩn (v1.14.1 & v1.14.0), Từ Điển & Quét Tiền Kỳ AI',
     badge: 'Preset & Glossary',
     icon: <BookOpenCheck className="h-4 w-4" />,
     summary:
-      'Quản lý Preset chỉ dẫn dịch thuật đa thể loại, Từ điển thuật ngữ lọc ngữ cảnh 0.5ms (mặc định tắt, chỉ gửi khi bật) và Trình quét dựng Từ điển Tiền kỳ Đa luồng (Pre-Scan Builder).',
+      'Tích hợp sẵn 4 bộ chỉ dẫn chuẩn (v1.14.1 & v1.14.0 cho Dịch Mới & Biên Tập AI), Từ điển lọc ngữ cảnh 0.5ms (6 phân loại) và Trình quét dựng Từ điển Tiền kỳ AI Đa luồng (tự trích xuất Từ cấm, Bằng chứng nguyên tác, Độ tin cậy % & Chốt xung đột 1-Click).',
     highlights: [
-      'Tích hợp sẵn 2 Preset chuẩn v1.14.0 (Dịch Mới & Biên Tập AI) + tạo mới/xuất/nhập .MD/.TXT',
-      'Lọc Từ điển thông minh 0.5ms theo chương & khoảng chương hiệu lực (Từ chương X -> Y)',
-      'Quét dựng Từ điển Tiền kỳ Đa luồng (1–10 chương/gói, 1x–10x luồng) có Tạm dừng / Tiếp tục / Dừng hẳn',
+      '4 Preset chuẩn v1.14.1 & v1.14.0 (Dịch Mới & Biên Tập AI) đồng bộ 100% cấu trúc JSON blocks-v1',
+      'Quét Từ điển AI: Trích xuất thêm Cách dịch cấm (forbiddenTranslations), Bằng chứng nguyên tác & Độ tin cậy %',
+      'Tự động phát hiện Xung đột bản dịch đa luồng (⚡ Xung đột) kèm bộ lọc & nút Chốt 1-Click',
     ],
     steps: [
       {
-        heading: 'Từ Điển Thuật Ngữ Thông Minh & 4 Chính Sách Áp Dụng',
+        heading: '4 Preset Chuẩn (v1.14.1 & v1.14.0) & Từ Điển Lọc Ngữ Cảnh 0.5ms',
         items: [
-          'Công tắc Từ điển mặc định TẮT để tiết kiệm token và giữ tốc độ tối đa; khi bật, hệ thống chỉ lọc các thuật ngữ thực sự xuất hiện trong chương đang dịch (kèm các mục ghim Luôn gửi).',
-          '4 Chính sách dịch thuật ngữ: Bắt buộc khớp 100% (force), Ưu tiên dùng (prefer), Tùy ngữ cảnh (contextual), và Giữ nguyên Hán Việt/Phiên âm (keep_source).',
-          'Hỗ trợ khai báo Biến thể (Aliases), Cách dịch cấm (Forbidden Target) và Khoảng chương hiệu lực (Từ chương X -> Đến chương Y).',
-          'Nút "Áp dụng & Thay thế vào các chương đã dịch": Đồng bộ tức thì thuật ngữ mới sửa vào toàn bộ các chương đã dịch trước đó.',
+          'Tab 1 tích hợp sẵn 4 bộ chỉ dẫn chuẩn: Dịch Trung - Việt v1.14.1 (mặc định), Biên Tập Trung - Việt v1.14.1 (mặc định), cùng 2 bản v1.14.0 tương ứng — tất cả đều khóa chặt đầu ra JSON blocks-v1.',
+          'Công tắc Từ điển mặc định TẮT; khi bật, hệ thống lọc 0.5ms chỉ gửi các thuật ngữ thực sự xuất hiện trong chương và nằm trong khoảng chương hiệu lực (Từ chương X -> Y).',
+          'Hỗ trợ 6 phân loại chuẩn (Nhân vật, Cảnh giới/Công pháp, Địa danh, Tông môn/Thế lực, Pháp bảo/Đan dược, Khác) và 4 chính sách áp dụng (force, prefer, contextual, keep_source).',
         ],
       },
       {
-        heading: 'Trình Quét Dựng Từ Điển Tiền Kỳ Đa Luồng (Pre-Scan Builder)',
+        heading: 'Trình Quét Dựng Từ Điển Tiền Kỳ AI Đa Luồng (Pre-Scan Builder Nâng Cấp)',
         items: [
-          'Chọn phạm vi chương cần quét (Tất cả, Đã tick, Khoảng chương Từ X -> Y, hoặc Chương đang mở).',
-          'Chọn số chương gộp mỗi gói AI (1–10 chương/gói) và số luồng chạy song song (1x–10x).',
-          'Hỗ trợ đầy đủ 3 nút điều khiển: Tạm dừng (Pause), Tiếp tục (Resume) và Dừng hẳn (Hard Stop). Nếu chạm giới hạn 429, trình quét tự động Tạm dừng (Auto-Pause) để bảo toàn danh sách chương chưa quét.',
+          'Quét theo gói 1–10 chương/gói, chạy 1x–10x luồng song song, hỗ trợ Tạm dừng (Pause), Tiếp tục (Resume) và Dừng hẳn (Hard Stop).',
+          'Tự động trích xuất chuyên sâu cho từng mục từ: (1) Cách dịch cấm (forbiddenTranslations — các cách dịch nghĩa đen sai hoặc nhầm âm Hán Việt để QA tự bắt lỗi), (2) Độ tin cậy (AI 0–100%), và (3) Câu bằng chứng trích nguyên tác (10–35 chữ Hán).',
+          'Phát hiện Xung đột đa luồng & Chốt 1-Click: Khi các gói quét song song đề xuất bản dịch khác nhau cho cùng 1 từ Hán, hệ thống tự gộp aliases/từ cấm, gắn nhãn "⚡ Xung đột" (lọc riêng tại tab "Xung đột") và cho phép bấm chọn 1 phương án chuẩn (phương án lệch tự động chuyển vào Từ cấm).',
         ],
       },
     ],
@@ -242,32 +240,31 @@ const GUIDE_SECTIONS: GuideSection[] = [
   },
   {
     id: 'bilingual_editor',
-    title: '7. Biên Tập Song Ngữ 1:1 Block-ID & Trợ Lý AI',
+    title: '7. Biên Tập Song Ngữ 1:1 Block-ID & Trợ Lý AI Tại Từng Đoạn',
     badge: 'Biên tập 1:1',
     icon: <Columns className="h-4 w-4" />,
     summary:
-      'Bảng biên tập khóa dòng 1:1 (TITLE, P0001..Pxxxx) với khung nhập tự giãn chiều cao, thanh công cụ ghim cố định, bộ nút căn chỉnh đoạn (Gộp, Tách, Đẩy, Kéo) và nút AI biên tập tự động căn lại cả chương khi lệch đoạn hoặc dọn sạch các block lỗi.',
+      'Bảng biên tập khóa dòng 1:1 (TITLE, P0001..Pxxxx) với thanh công cụ tổng tinh gọn ở đầu trang và thanh thao tác AI trực tiếp dưới từng dòng đoạn văn (AI Dịch Block • 3 Gợi ý • Lệnh AI... • Gộp / Tách / Đẩy / Kéo).',
     highlights: [
-      'Khóa cứng từng cặp đoạn văn Nguyên tác (Trái) — Bản dịch (Phải) theo mã TITLE, P0001..Pxxxx',
-      'Thanh công cụ ghim cố định: Undo/Redo 60 bước, Chuẩn hóa câu, Lọc Block lỗi, Tìm & Thay thế trong chương',
+      'Thanh công cụ tổng đầu trang gọn gàng: Undo/Redo, Sửa raw, Xuất/Nhập TXT 1:1, Chuẩn hóa câu, Tìm & Thay',
+      'Trợ lý AI ngay dưới từng dòng Pxxxx: AI Dịch Block • 3 Gợi ý • Lệnh AI... (bung kết quả ngay dưới đoạn)',
       'Tự động gửi CẢ CHƯƠNG để căn lại 1:1 nếu bị QA Lệch Đoạn, hoặc chỉ gửi riêng các Block lỗi nếu đã khớp 1:1',
     ],
     steps: [
       {
-        heading: 'Các công cụ căn chỉnh cấu trúc đoạn 1:1 ngay trên từng dòng Pxxxx',
+        heading: 'Trợ lý AI & Công cụ căn chỉnh trực tiếp dưới từng dòng Block ID (Pxxxx)',
         items: [
-          'Gộp ↓: Gộp đoạn tiếng Việt hiện tại với đoạn kế tiếp bên dưới (kéo các đoạn dưới lên 1 nhịp).',
-          'Tách ↵ (hoặc nhấn Ctrl + Enter tại vị trí con trỏ): Tách đoạn đang chọn thành 2 đoạn độc lập (đẩy các đoạn dưới xuống 1 nhịp).',
-          'Đẩy ↓ / Kéo ↑: Chèn 1 ô trống để đẩy các đoạn dưới xuống 1 nhịp, hoặc xóa ô dịch dư để kéo các đoạn dưới lên 1 nhịp.',
-          'Xóa Hán & AI Dịch Block: Xóa sạch chữ Hán còn sót trong đoạn chỉ với 1 click, hoặc yêu cầu AI dịch lại riêng đoạn Pxxxx đó.',
+          'AI Dịch Block: Dịch mới hoặc chuốt mượt lại toàn diện (kèm đồng bộ xưng hô theo ngữ cảnh đoạn trước/sau) cho riêng duy nhất Block ID đó.',
+          '3 Gợi ý: Đề xuất 3 phương án diễn đạt khác nhau cho đoạn văn (hoặc cụm từ đang bôi đen trong đoạn); hộp chọn 3 phương án bung ra ngay bên dưới dòng Pxxxx đó để bấm áp dụng 1-click.',
+          'Lệnh AI...: Mở ô nhập yêu cầu tùy chỉnh ngay bên dưới dòng Pxxxx hiện tại (nhấn Enter hoặc bấm Thực thi để AI sửa trực tiếp đoạn đó).',
+          'Căn chỉnh đoạn 1:1: Gộp ↓ (gộp với đoạn dưới), Tách ↵ (Ctrl + Enter tại con trỏ để tách làm 2 đoạn), Đẩy ↓ (chèn ô trống đẩy xuống 1 nhịp), Kéo ↑ (xóa ô dịch dư kéo lên 1 nhịp), và Xóa Hán (lọc bỏ chữ Hán sót 1-click).',
         ],
       },
       {
-        heading: 'Trợ lý AI Tinh Chỉnh: Gửi Cả Chương Khi Lệch Đoạn vs Dọn Riêng Block Lỗi',
+        heading: 'Nút AI Biên Tập Toàn Chương: Tự Động Căn Lại 1:1 Khi Lệch Đoạn vs Dọn Riêng Block Lỗi',
         items: [
-          'Khi chương bị báo QA Lệch Đoạn (số đoạn dịch khác số đoạn gốc): Nhấn "AI biên tập" (hoặc "AI Căn Lại & Biên Tập Cả Chương") sẽ tự động gửi TOÀN BỘ CHƯƠNG (nguyên tác + bản dịch hiện có) để AI phân bổ, tách/gộp lại khớp chính xác 1:1 từng mã P0001..Pxxxx mà không bị dịch lặp đoạn cuối.',
+          'Khi chương bị báo QA Lệch Đoạn (số đoạn dịch khác số đoạn gốc): Nhấn "AI biên tập" (hoặc "AI Căn Lại & Biên Tập Cả Chương") sẽ tự động gửi TOÀN BỘ CHƯƠNG (nguyên tác + bản dịch hiện có) để AI phân bổ, tách/gộp lại khớp chính xác 1:1 từng mã P0001..Pxxxx.',
           'Khi chương đã khớp đoạn 1:1: Nhấn "AI Dọn Block Lỗi" sẽ chỉ gom riêng các đoạn còn sót chữ Hán / lọt tiếng Anh gửi cho AI làm sạch nhanh trong 1 lượt.',
-          'Trợ lý vùng bôi đen: Bôi đen câu chữ bất kỳ rồi nhấn "Chuốt mượt", "Sửa xưng hô", "3 Gợi ý" hoặc "Lệnh AI..." để yêu cầu AI sửa theo ý muốn.',
         ],
       },
     ],
@@ -405,8 +402,8 @@ Chào mừng bạn đến với **Mặc Hương Các Studio** — không gian l�
 
 ## 1. Quy Trình Nhanh 5 Bước & Không Gian Làm Việc
 1. **Bước 1 (Thư Viện)**: Nhấn **Thư Viện** để chọn bộ truyện mẫu hoặc tạo dự án truyện mới.
-2. **Bước 2 (Nhập Chương)**: Nhấn **Nhập Chương** để nạp nhiều file .TXT, sách .EPUB, tách 1 file .TXT gộp bằng Regex, hoặc tải từ URL.
-3. **Bước 3 (Preset, Thinking Level & 50 Keys)**: Mở **Preset & Model** để chọn chỉ dẫn dịch, chọn mức suy luận **Thinking Level** (\`minimal\`, \`low\`, \`medium\`, \`high\` — mặc định \`high\`), và nạp tối đa 50 API Key.
+2. **Bước 2 (Nhập & Tách Chương)**: Nhấn **Nhập Chương** để nạp thư mục/gói .ZIP chương .TXT, sách .EPUB, tách 1 file .TXT gộp bằng **Trình Tách Chương Thông Minh** (hoặc Regex), hoặc tải từ URL.
+3. **Bước 3 (Preset v1.14.1 / v1.14.0, Thinking Level & 50 Keys)**: Mở **Preset & Model** để chọn chỉ dẫn dịch (\`v1.14.1\` hoặc \`v1.14.0\`), chọn mức suy luận **Thinking Level** (\`minimal\`, \`low\`, \`medium\`, \`high\` — mặc định \`high\`), và nạp tối đa 50 API Key.
 4. **Bước 4 (Hàng Đợi Đa Luồng)**: Tick chọn chương -> chọn số luồng (\`1x–10x\`) -> nhấn **Dịch Đã Chọn** hoặc **Biên Tập Đã Chọn**.
 5. **Bước 5 (Biên Tập 1:1, Đọc & Xuất Sách)**: Rà soát trên bảng khóa dòng 1:1 (\`TITLE\`, \`P0001\`..\`Pxxxx\`), kiểm tra ở chế độ **Đọc**, và nhấn **Xuất & Sao lưu** để tải sách \`.EPUB 3.3\` hoặc gói sao lưu \`.ZIP (Backup v5)\`.
 - **Tự động cuộn lên đầu chương (Scroll-to-Top)**: Mỗi khi đổi chương ở cả chế độ **Biên tập bản dịch** lẫn **Đọc**, khung nội dung đều tự động cuộn về đầu chương (\`scrollTop = 0\`).
@@ -415,32 +412,34 @@ Chào mừng bạn đến với **Mặc Hương Các Studio** — không gian l�
 - **Biểu đồ tròn Donut 3 tầng**: Thống kê trực quan số chương **Đã biên tập / Đã duyệt** (Xanh ngọc), **Đã dịch chưa duyệt** (Hổ phách) và **Chưa dịch** (Xám giấy) cho toàn thư viện và từng bộ truyện.
 - Hỗ trợ chuyển đổi giữa **Chế độ Thẻ (Card View)** và **Bảng Ma Trận (Table View)**, Ghim ưu tiên ⭐, Sửa thông tin & Ảnh bìa EPUB, Nhân bản (Clone) và Khôi phục từ gói \`.ZIP Backup v5\`.
 
-## 3. Nhập Nguyên Tác (4 Nguồn) & Nhập Bản Dịch Ngoài (.TXT 1:1)
-- **4 nguồn nhập nguyên tác**: (1) Nhiều file \`.txt\` theo tiền tố \`XXXX_\`, (2) Sách \`.epub\` tiếng Trung, (3) Tách 1 file \`.txt\` gộp bằng Regex có bảng Preview, (4) Dán văn bản hoặc tải trực tiếp từ URL (tự động giải mã UTF-8, GB18030, GBK).
+## 3. Nhập Nguyên Tác (4 Nguồn, Tách Chương Thông Minh) & Bản Dịch Ngoài (.TXT 1:1)
+- **4 nguồn nhập nguyên tác**: (1) Thư mục / nhiều file \`.txt\` / gói \`.zip\` theo tiền tố \`XXXX_\`, (2) Sách \`.epub\` tiếng Trung, (3) **Trình Tách Chương Thông Minh** (phân biệt nguồn bẩn/nguồn sạch, lọc bỏ Mục lục đầu sách, tách Lời mở đầu, tải ngay gói \`.ZIP\` đã tách) hoặc Regex, (4) Dán văn bản hoặc tải trực tiếp từ URL.
+- **Giải mã đa bảng mã tiếng Trung**: Hỗ trợ \`Auto-detect\`, \`UTF-8\`, \`GB18030 / GBK\` và \`UTF-16LE\`.
 - **Nhập bản dịch ngoài (.TXT)**: Nạp file \`.txt\` bản dịch vào chương đang mở với bảng Xem Trước Ghép Đoạn 1:1 (\`TITLE\`, \`P0001\`..\`Pxxxx\`).
 
-## 4. Cấu Hình Model Alias, Thinking Level & Bể 50 API Key
-- **Model Alias**: \`gemini-flash-latest\` (khuyên dùng), \`gemini-3.8-flash\`, \`gemini-4-argon\`, \`gemini-3.1-flash-lite\` và nhập mã Model tùy chỉnh.
-- **Mức độ suy luận (\`Thinking Level\`: \`minimal\` • \`low\` • \`medium\` • \`high\`)**:
-  - Tự động lấy danh sách mức suy luận từ SDK/API (\`/api/models\`), **mặc định là \`high\`**.
-  - Khi gặp chương quá dài dễ bị ngắt kết nối cổng 300 giây, hãy chọn nhanh \`medium\`, \`low\` hoặc \`minimal\` ngay trên thanh Hàng Đợi cột trái hoặc trong \`Preset & Model -> Tab 3\`.
-- **Bể 50 API Key lưu bền vững vào dự án**: Hỗ trợ tối đa 50 Key (\`1 Luồng = 1 Key Độc Lập\`), nút **Xóa sạch Key** trước khi Public, **Chẩn đoán Key & 5 Tuyến API**, và **Xóa Cooldown 429**.
+## 4. Cấu Hình Model Alias, Thinking Level, Chống Timeout 300s & Bể 50 Key
+- **Structured Output chuẩn SDK (\`blocks-v1\`)**: Sử dụng \`response_format: { type: 'text', mime_type: 'application/json', schema: ... }\` kèm khóa cứng \`minItems\`/\`maxItems\`.
+- **Mức độ suy luận (\`Thinking Level\`: \`minimal\` • \`low\` • \`medium\` • \`high\`, mặc định \`high\`) & Bảo vệ kép chống Timeout 300s**:
+  - **Cách 1 (\`renewWire1\` ở 240s)**: Tự động làm mới kết nối / xoay sang Key tiếp theo ở giây 240 trước trần 300s.
+  - **Cách 2 (\`NDJSON Heartbeat Stream 15s\`)**: Gửi xung nhịp tim mỗi 15 giây giữ kết nối HTTP luôn hoạt động trong suốt quá trình AI suy luận sâu.
+- **Bể 50 API Key lưu bền vững & Bảo mật 100%**: Hỗ trợ tối đa 50 Key (\`1 Luồng = 1 Key Độc Lập\`), không lưu cứng Key trong \`.env\`, có nút **Xóa sạch Key**, **Chẩn đoán Key & 5 Tuyến API**, và **Xóa Cooldown 429**.
 
-## 5. Chỉ Dẫn Dịch (Preset), Từ Điển (Glossary) & Quét Tiền Kỳ Đa Luồng
-- **Từ điển thông minh lọc ngữ cảnh 0.5ms**: Mặc định công tắc Từ điển TẮT; khi bật chỉ gửi các thuật ngữ xuất hiện trong chương và nằm trong khoảng chương hiệu lực (\`Từ chương X -> Y\`).
-- **Trình Quét Dựng Từ Điển Tiền Kỳ Đa Luồng (Pre-Scan Builder)**: Quét theo gói \`1–10 chương/gói\`, chạy \`1x–10x\` luồng, hỗ trợ **Tạm dừng / Tiếp tục / Dừng hẳn** và tự động Tạm dừng khi chạm trần 429.
+## 5. 4 Preset Chuẩn (\`v1.14.1\` & \`v1.14.0\`), Từ Điển & Quét Tiền Kỳ AI Đa Luồng
+- **4 Preset tích hợp sẵn**: *Dịch Trung - Việt* và *Biên Tập Trung - Việt* phiên bản \`v1.14.1\` (mặc định) và \`v1.14.0\`, đồng bộ 100% cấu trúc đầu ra \`blocks-v1\`.
+- **Từ điển thông minh lọc ngữ cảnh 0.5ms (6 phân loại)**: Mặc định công tắc Từ điển TẮT; khi bật chỉ gửi các thuật ngữ xuất hiện trong chương và nằm trong khoảng chương hiệu lực (\`Từ chương X -> Y\`).
+- **Trình Quét Dựng Từ Điển Tiền Kỳ AI Đa Luồng (Pre-Scan Builder)**: Quét theo gói \`1–10 chương/gói\`, chạy \`1x–10x\` luồng; tự động trích xuất thêm **Cách dịch cấm (\`forbiddenTranslations\`)**, **Độ tin cậy (\`0–100%\`)**, **Câu bằng chứng nguyên tác (\`10–35 chữ Hán\`)**, và tự động phát hiện **Xung đột bản dịch đa luồng (\`⚡ Xung đột\`)** kèm bộ lọc & nút **Chốt 1-Click**.
 
 ## 6. Hàng Đợi Dịch & Biên Tập AI Đa Luồng (1x–10x)
 - Hỗ trợ **Dịch Đã Chọn** (Dịch mới 100%) và **Biên Tập Đã Chọn** (Chuốt mượt + sửa xưng hô + dọn chữ Hán).
 - Trang bị nút **Tạm dừng (Pause)**, **Tiếp tục (Resume)**, **Dừng hẳn (Hard Stop)**, tự động Tạm dừng khi hết hạn mức 429 và thanh **1-Click Chạy lại chương lỗi / Đặt lại chương kẹt**.
 
-## 7. Biên Tập Song Ngữ 1:1 Khóa Dòng Block-ID & Trợ Lý AI
-- Khóa dòng 1:1 theo mã \`TITLE\`, \`P0001\`..\`Pxxxx\` với khung nhập tự giãn chiều cao và thanh công cụ ghim cố định.
-- Công cụ căn chỉnh đoạn: \`Gộp ↓\`, \`Tách ↵\` (\`Ctrl + Enter\`), \`Đẩy ↓\`, \`Kéo ↑\`, \`Xóa Hán\`, \`AI Dịch Block\`.
-- Nút **AI biên tập (N)** tự động dọn sạch toàn bộ các block có lỗi trong chương chỉ với 1 click (kèm nút Hủy tức thì).
+## 7. Biên Tập Song Ngữ 1:1 Khóa Dòng Block-ID & Trợ Lý AI Tại Từng Đoạn
+- Khóa dòng 1:1 theo mã \`TITLE\`, \`P0001\`..\`Pxxxx\` với khung nhập tự giãn chiều cao và thanh công cụ tổng tinh gọn trên đầu trang.
+- **Trợ lý AI & căn chỉnh trực tiếp dưới từng dòng \`Pxxxx\`**: \`AI Dịch Block\`, \`3 Gợi ý\` (bung 3 phương án ngay dưới đoạn), \`Lệnh AI...\` (nhập lệnh tùy chỉnh ngay dưới đoạn), \`Gộp ↓\`, \`Tách ↵\` (\`Ctrl + Enter\`), \`Đẩy ↓\`, \`Kéo ↑\`, \`Xóa Hán\`.
+- Nút **AI biên tập** trên thanh tiêu đề bảng tự động căn lại cả chương khi lệch đoạn hoặc dọn sạch các block có lỗi trong chương.
 
 ## 8. Kiểm Định Chất Lượng (QA Scanner) & Tìm / Thay Thế Toàn Văn
-- Tự động phát hiện: (1) Sót chữ Hán, (2) Rò rỉ tiếng Anh (\`English Leak\`), (3) Lệch đoạn 1:1, (4) Vi phạm từ cấm & thuật ngữ bắt buộc.
+- Tự động phát hiện: (1) Sót chữ Hán, (2) Rò rỉ tiếng Anh (\`English Leak\`), (3) Lệch đoạn 1:1, (4) Vi phạm từ cấm & cách dịch cấm trong Từ điển.
 - Công cụ **Tìm Toàn Văn** hỗ trợ tìm kiếm & thay thế hàng loạt xuyên suốt bộ truyện (có Regex).
 
 ## 9. Chế Độ Đọc Sạch (Justify), Màu HEX/RGB, Font Cá Nhân & Highlight
