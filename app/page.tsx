@@ -1,5 +1,6 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BookOpen,
@@ -123,15 +124,35 @@ import {
   serializeBodyBlocksToContent,
 } from '@/lib/block-engine';
 import { logger, safeFetchJson, subscribeToLogs } from '@/lib/logger';
-import ImportModal from '@/components/ImportModal';
-import ReaderAppearanceModal from '@/components/ReaderAppearanceModal';
-import InstructionsGlossaryModal from '@/components/InstructionsGlossaryModal';
-import FullTextSearchReplaceModal from '@/components/FullTextSearchReplaceModal';
-import ExportModal from '@/components/ExportModal';
-import TranslationImportModal from '@/components/TranslationImportModal';
-import NovelLibraryModal from '@/components/NovelLibraryModal';
-import SystemTerminalDrawer from '@/components/SystemTerminalDrawer';
-import UserGuideModal from '@/components/UserGuideModal';
+
+const ImportModal = dynamic(() => import('@/components/ImportModal'), { ssr: false });
+const ReaderAppearanceModal = dynamic(
+  () => import('@/components/ReaderAppearanceModal'),
+  { ssr: false }
+);
+const InstructionsGlossaryModal = dynamic(
+  () => import('@/components/InstructionsGlossaryModal'),
+  { ssr: false }
+);
+const FullTextSearchReplaceModal = dynamic(
+  () => import('@/components/FullTextSearchReplaceModal'),
+  { ssr: false }
+);
+const ExportModal = dynamic(() => import('@/components/ExportModal'), { ssr: false });
+const TranslationImportModal = dynamic(
+  () => import('@/components/TranslationImportModal'),
+  { ssr: false }
+);
+const NovelLibraryModal = dynamic(() => import('@/components/NovelLibraryModal'), {
+  ssr: false,
+});
+const SystemTerminalDrawer = dynamic(
+  () => import('@/components/SystemTerminalDrawer'),
+  { ssr: false }
+);
+const UserGuideModal = dynamic(() => import('@/components/UserGuideModal'), {
+  ssr: false,
+});
 
 type WorkspaceMode = 'reader' | 'editor';
 type SortOption =
@@ -420,10 +441,6 @@ export default function MacHuongCacStudioPage() {
   // Automatically scroll Editor & Reader viewports to top whenever activeChapterId changes
   useEffect(() => {
     if (!activeChapterId) return;
-    setActiveFocusedBlockId('TITLE');
-    setAiAlternatives([]);
-    setAiAlternativesBlockId(null);
-    setCustomAiBlockId(null);
     if (editorScrollContainerRef.current) {
       editorScrollContainerRef.current.scrollTop = 0;
     }
@@ -431,6 +448,10 @@ export default function MacHuongCacStudioPage() {
       readerScrollContainerRef.current.scrollTop = 0;
     }
     const rafId = window.requestAnimationFrame(() => {
+      setActiveFocusedBlockId('TITLE');
+      setAiAlternatives([]);
+      setAiAlternativesBlockId(null);
+      setCustomAiBlockId(null);
       if (editorScrollContainerRef.current) {
         editorScrollContainerRef.current.scrollTop = 0;
       }
@@ -615,29 +636,31 @@ export default function MacHuongCacStudioPage() {
   useEffect(() => {
     if (currentChapterSyncKey === syncedChapterKeyRef.current) return;
     syncedChapterKeyRef.current = currentChapterSyncKey;
-    if (!activeChapter) {
-      setEditorTitle('');
-      setEditorContent('');
-      setHistoryStack([]);
-      setHistoryPointer(-1);
-      setAiAlternatives([]);
-    } else {
-      const initTitle = normalizeVietnameseText(activeChapter.titleTranslated || '');
-      const initContent = normalizeVietnameseText(
-        activeChapter.translatedContent || ''
-      );
-      setEditorTitle(initTitle);
-      setEditorContent(initContent);
-      const initialSnap: EditorHistorySnapshot = {
-        titleTranslated: initTitle,
-        translatedContent: initContent,
-        timestamp: activeChapter.updatedAt,
-        label: 'Khởi tạo chương',
-      };
-      setHistoryStack([initialSnap]);
-      setHistoryPointer(0);
-      setAiAlternatives([]);
-    }
+    queueMicrotask(() => {
+      if (!activeChapter) {
+        setEditorTitle('');
+        setEditorContent('');
+        setHistoryStack([]);
+        setHistoryPointer(-1);
+        setAiAlternatives([]);
+      } else {
+        const initTitle = normalizeVietnameseText(activeChapter.titleTranslated || '');
+        const initContent = normalizeVietnameseText(
+          activeChapter.translatedContent || ''
+        );
+        setEditorTitle(initTitle);
+        setEditorContent(initContent);
+        const initialSnap: EditorHistorySnapshot = {
+          titleTranslated: initTitle,
+          translatedContent: initContent,
+          timestamp: activeChapter.updatedAt,
+          label: 'Khởi tạo chương',
+        };
+        setHistoryStack([initialSnap]);
+        setHistoryPointer(0);
+        setAiAlternatives([]);
+      }
+    });
   }, [currentChapterSyncKey, activeChapter]);
 
   const pushEditorSnapshot = useCallback(
@@ -5587,67 +5610,83 @@ export default function MacHuongCacStudioPage() {
       </div>
 
       {/* MODALS */}
-      <NovelLibraryModal
-        isOpen={isLibraryModalOpen}
-        onClose={() => setIsLibraryModalOpen(false)}
-        novels={novels}
-        activeNovelId={activeNovelId}
-        summaries={liveLibrarySummaries}
-        instructions={instructions}
-        onSelectNovel={async (novelId) => {
-          await handleSelectNovel(novelId);
-          const selected = novels.find((n) => n.id === novelId);
-          if (selected) {
-            showToast(`Đã chuyển sang bộ truyện "${selected.title}"!`);
-          }
-        }}
-        onSelectNovelAndReadBookmark={async (novelId) => {
-          await handleSelectNovel(novelId);
-          const bm = loadReadingBookmark(novelId);
-          if (bm) {
-            setActiveChapterId(bm.chapterId);
-            setWorkspaceMode('reader');
-            setTimeout(() => {
-              const container = readerScrollContainerRef.current;
-              const ratio =
-                bm.scrollRatio ?? (bm.scrollPercentage || 0) / 100;
-              if (container && container.scrollHeight > container.clientHeight) {
-                container.scrollTo({
-                  top: ratio * (container.scrollHeight - container.clientHeight),
-                  behavior: 'smooth',
-                });
-              }
-            }, 150);
-          }
-        }}
-        onSelectNovelAndImportChapters={async (novelId) => {
-          if (novelId !== activeNovelId) {
+      {isLibraryModalOpen && (
+        <NovelLibraryModal
+          isOpen={isLibraryModalOpen}
+          onClose={() => setIsLibraryModalOpen(false)}
+          novels={novels}
+          activeNovelId={activeNovelId}
+          summaries={liveLibrarySummaries}
+          instructions={instructions}
+          onSelectNovel={async (novelId) => {
             await handleSelectNovel(novelId);
-          }
-          setIsImportModalOpen(true);
-        }}
-        onSelectNovelAndExport={async (novelId) => {
-          if (novelId !== activeNovelId) {
+            const selected = novels.find((n) => n.id === novelId);
+            if (selected) {
+              showToast(`Đã chuyển sang bộ truyện "${selected.title}"!`);
+            }
+          }}
+          onSelectNovelAndReadBookmark={async (novelId) => {
             await handleSelectNovel(novelId);
-          }
-          setIsExportModalOpen(true);
-        }}
-        onSaveNovel={async (targetNovel, isNew) => {
-          await saveNovel(targetNovel);
-          await refreshLibraryData();
-          if (isNew) {
-            await handleSelectNovel(targetNovel.id);
-          }
-        }}
-        onDuplicateNovel={async (sourceNovel) => {
-          const cloned = await duplicateNovelProject(sourceNovel, true);
-          await refreshLibraryData();
-          await handleSelectNovel(cloned.id);
-        }}
-        onDeleteNovel={async (novelId) => {
-          await deleteNovelAndData(novelId);
-          const remaining = await refreshLibraryData();
-          if (remaining.length === 0) {
+            const bm = loadReadingBookmark(novelId);
+            if (bm) {
+              setActiveChapterId(bm.chapterId);
+              setWorkspaceMode('reader');
+              setTimeout(() => {
+                const container = readerScrollContainerRef.current;
+                const ratio =
+                  bm.scrollRatio ?? (bm.scrollPercentage || 0) / 100;
+                if (container && container.scrollHeight > container.clientHeight) {
+                  container.scrollTo({
+                    top: ratio * (container.scrollHeight - container.clientHeight),
+                    behavior: 'smooth',
+                  });
+                }
+              }, 150);
+            }
+          }}
+          onSelectNovelAndImportChapters={async (novelId) => {
+            if (novelId !== activeNovelId) {
+              await handleSelectNovel(novelId);
+            }
+            setIsImportModalOpen(true);
+          }}
+          onSelectNovelAndExport={async (novelId) => {
+            if (novelId !== activeNovelId) {
+              await handleSelectNovel(novelId);
+            }
+            setIsExportModalOpen(true);
+          }}
+          onSaveNovel={async (targetNovel, isNew) => {
+            await saveNovel(targetNovel);
+            await refreshLibraryData();
+            if (isNew) {
+              await handleSelectNovel(targetNovel.id);
+            }
+          }}
+          onDuplicateNovel={async (sourceNovel) => {
+            const cloned = await duplicateNovelProject(sourceNovel, true);
+            await refreshLibraryData();
+            await handleSelectNovel(cloned.id);
+          }}
+          onDeleteNovel={async (novelId) => {
+            await deleteNovelAndData(novelId);
+            const remaining = await refreshLibraryData();
+            if (remaining.length === 0) {
+              setActiveNovelId('');
+              saveActiveNovelId('');
+              setChapters([]);
+              setGlossary([]);
+              setHighlights([]);
+              setSavedBookmark(null);
+              setActiveChapterId(null);
+              setSelectedChapterIds(new Set());
+            } else if (novelId === activeNovelId) {
+              await handleSelectNovel(remaining[0].id);
+            }
+          }}
+          onDeleteAllNovels={async () => {
+            await deleteAllNovelsAndData();
+            await refreshLibraryData();
             setActiveNovelId('');
             saveActiveNovelId('');
             setChapters([]);
@@ -5656,111 +5695,100 @@ export default function MacHuongCacStudioPage() {
             setSavedBookmark(null);
             setActiveChapterId(null);
             setSelectedChapterIds(new Set());
-          } else if (novelId === activeNovelId) {
-            await handleSelectNovel(remaining[0].id);
-          }
-        }}
-        onDeleteAllNovels={async () => {
-          await deleteAllNovelsAndData();
-          await refreshLibraryData();
-          setActiveNovelId('');
-          saveActiveNovelId('');
-          setChapters([]);
-          setGlossary([]);
-          setHighlights([]);
-          setSavedBookmark(null);
-          setActiveChapterId(null);
-          setSelectedChapterIds(new Set());
-          showToast('Đã xóa toàn bộ truyện trong Thư viện!');
-        }}
-        onRestoreBackupProject={async (restored) => {
-          await saveNovel(restored.novel);
-          const scannedRestoredChapters = restored.chapters.map((c) => ({
-            ...c,
-            qaReport: scanChapterQA(
-              c,
-              modelConfig.customBannedWords,
-              modelConfig.qaRules || DEFAULT_QA_VALIDATION_RULES
-            ),
-          }));
-          await saveChaptersBulk(scannedRestoredChapters);
-          await saveGlossaryEntriesBulk(restored.glossary);
-          await saveHighlightsBulk(restored.highlights);
-          for (const p of restored.instructions) {
-            await saveInstructionProfile(p);
-          }
-          await refreshLibraryData();
-          await handleSelectNovel(restored.novel.id);
-        }}
-      />
-      <ImportModal
-        isOpen={isImportModalOpen}
-        onClose={() => setIsImportModalOpen(false)}
-        novelId={activeNovelId || 'novel-auto'}
-        existingChapterCount={chapters.length}
-        onImportChapters={async (importedChapters, bookMetadata) => {
-          let targetNovelId = activeNovelId;
-          if (!targetNovelId || !activeNovel) {
-            const now = Date.now();
-            targetNovelId = `novel-${now}`;
-            const autoCreatedNovel: NovelProject = {
-              id: targetNovelId,
-              title: bookMetadata?.title?.trim() || 'Truyện Mới Nhập',
-              originalTitle: '',
-              author: bookMetadata?.author?.trim() || 'Khuyết danh',
-              description: '',
-              instructionProfileId: DEFAULT_INSTRUCTION_ID,
-              editorialProfileId: DEFAULT_EDITORIAL_INSTRUCTION_ID,
-              includeGlossary: false,
-              createdAt: now,
-              updatedAt: now,
-            };
-            await saveNovel(autoCreatedNovel);
-            setActiveNovelId(targetNovelId);
-            saveActiveNovelId(targetNovelId);
-          } else if (bookMetadata?.title) {
-            const updatedNovel: NovelProject = {
-              ...activeNovel,
-              updatedAt: Date.now(),
-            };
-            await saveNovel(updatedNovel);
-          }
-
-          const scanned = importedChapters.map((c) => {
-            const withNovelId: Chapter = {
+            showToast('Đã xóa toàn bộ truyện trong Thư viện!');
+          }}
+          onRestoreBackupProject={async (restored) => {
+            await saveNovel(restored.novel);
+            const scannedRestoredChapters = restored.chapters.map((c) => ({
               ...c,
-              id: c.novelId === targetNovelId ? c.id : `ch-${targetNovelId}-${c.orderPrefix}-${Date.now()}`,
-              novelId: targetNovelId,
-            };
-            return {
-              ...withNovelId,
               qaReport: scanChapterQA(
-                withNovelId,
+                c,
                 modelConfig.customBannedWords,
                 modelConfig.qaRules || DEFAULT_QA_VALIDATION_RULES
               ),
-            };
-          });
-          await saveChaptersBulk(scanned);
-          await refreshLibraryData();
-          const refreshed = await getChaptersByNovel(targetNovelId);
-          const refreshedScanned = refreshed.map((c) => ({
-            ...c,
-            qaReport: scanChapterQA(
-              c,
-              modelConfig.customBannedWords,
-              modelConfig.qaRules || DEFAULT_QA_VALIDATION_RULES
-            ),
-          }));
-          setChapters(refreshedScanned);
-          if (scanned.length > 0) {
-            setActiveChapterId(scanned[0].id);
-          }
-          showToast(`Đã nhập thành công ${scanned.length} chương mới!`);
-        }}
-      />
+            }));
+            await saveChaptersBulk(scannedRestoredChapters);
+            await saveGlossaryEntriesBulk(restored.glossary);
+            await saveHighlightsBulk(restored.highlights);
+            for (const p of restored.instructions) {
+              await saveInstructionProfile(p);
+            }
+            await refreshLibraryData();
+            await handleSelectNovel(restored.novel.id);
+          }}
+        />
+      )}
 
-      {activeChapter && (
+      {isImportModalOpen && (
+        <ImportModal
+          isOpen={isImportModalOpen}
+          onClose={() => setIsImportModalOpen(false)}
+          novelId={activeNovelId || 'novel-auto'}
+          existingChapterCount={chapters.length}
+          onImportChapters={async (importedChapters, bookMetadata) => {
+            let targetNovelId = activeNovelId;
+            if (!targetNovelId || !activeNovel) {
+              const now = Date.now();
+              targetNovelId = `novel-${now}`;
+              const autoCreatedNovel: NovelProject = {
+                id: targetNovelId,
+                title: bookMetadata?.title?.trim() || 'Truyện Mới Nhập',
+                originalTitle: '',
+                author: bookMetadata?.author?.trim() || 'Khuyết danh',
+                description: '',
+                instructionProfileId: DEFAULT_INSTRUCTION_ID,
+                editorialProfileId: DEFAULT_EDITORIAL_INSTRUCTION_ID,
+                includeGlossary: false,
+                createdAt: now,
+                updatedAt: now,
+              };
+              await saveNovel(autoCreatedNovel);
+              setActiveNovelId(targetNovelId);
+              saveActiveNovelId(targetNovelId);
+            } else if (bookMetadata?.title) {
+              const updatedNovel: NovelProject = {
+                ...activeNovel,
+                updatedAt: Date.now(),
+              };
+              await saveNovel(updatedNovel);
+            }
+
+            const scanned = importedChapters.map((c) => {
+              const withNovelId: Chapter = {
+                ...c,
+                id: c.novelId === targetNovelId ? c.id : `ch-${targetNovelId}-${c.orderPrefix}-${Date.now()}`,
+                novelId: targetNovelId,
+              };
+              return {
+                ...withNovelId,
+                qaReport: scanChapterQA(
+                  withNovelId,
+                  modelConfig.customBannedWords,
+                  modelConfig.qaRules || DEFAULT_QA_VALIDATION_RULES
+                ),
+              };
+            });
+            await saveChaptersBulk(scanned);
+            await refreshLibraryData();
+            const refreshed = await getChaptersByNovel(targetNovelId);
+            const refreshedScanned = refreshed.map((c) => ({
+              ...c,
+              qaReport: scanChapterQA(
+                c,
+                modelConfig.customBannedWords,
+                modelConfig.qaRules || DEFAULT_QA_VALIDATION_RULES
+              ),
+            }));
+            setChapters(refreshedScanned);
+            if (scanned.length > 0) {
+              setActiveChapterId(scanned[0].id);
+            }
+            showToast(`Đã nhập thành công ${scanned.length} chương mới!`);
+          }}
+        />
+      )}
+
+      {activeChapter && isTranslationImportModalOpen && (
         <TranslationImportModal
           isOpen={isTranslationImportModalOpen}
           onClose={() => setIsTranslationImportModalOpen(false)}
@@ -5781,206 +5809,212 @@ export default function MacHuongCacStudioPage() {
         />
       )}
 
-      <ReaderAppearanceModal
-        isOpen={isAppearanceModalOpen}
-        onClose={() => setIsAppearanceModalOpen(false)}
-        settings={readerSettings}
-        customFonts={customFonts}
-        onUpdateSettings={(next) => {
-          setReaderSettings(next);
-          saveReaderSettings(next);
-        }}
-        onUploadCustomFont={async (file: File) => {
-          const dataBase64 = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(String(reader.result || ''));
-            reader.onerror = () => reject(reader.error);
-            reader.readAsDataURL(file);
-          });
-          const cleanName =
-            file.name
-              .replace(/\.(ttf|otf|woff2|woff)$/i, '')
-              .replace(/[^a-zA-Z0-9\s\-_]/g, '')
-              .trim() || `CustomFont-${Date.now()}`;
-          const fontRecord: CustomFontRecord = {
-            id: `font-${Date.now()}`,
-            name: cleanName,
-            fileName: file.name,
-            mimeType: file.type || 'font/ttf',
-            dataBase64,
-            createdAt: Date.now(),
-          };
-          try {
-            const fontFace = new FontFace(cleanName, `url(${dataBase64})`);
-            const loaded = await fontFace.load();
-            document.fonts.add(loaded);
-          } catch {
-            // Ignore FontFace registration error if browser already loaded
-          }
-          await saveCustomFont(fontRecord);
-          setCustomFonts((prev) => [...prev, fontRecord]);
-          const nextSettings: ReaderSettings = {
-            ...readerSettings,
-            fontFamily: `"${cleanName}", serif`,
-          };
-          setReaderSettings(nextSettings);
-          saveReaderSettings(nextSettings);
-        }}
-        onDeleteCustomFont={async (fontId) => {
-          await deleteCustomFont(fontId);
-          setCustomFonts((prev) => prev.filter((f) => f.id !== fontId));
-        }}
-      />
-
-      <InstructionsGlossaryModal
-        isOpen={isInstructionsModalOpen}
-        onClose={() => setIsInstructionsModalOpen(false)}
-        initialTab={instructionsModalTab}
-        instructions={instructions}
-        activeInstructionId={
-          activeNovel?.instructionProfileId || DEFAULT_INSTRUCTION_ID
-        }
-        activeEditorialId={
-          activeNovel?.editorialProfileId || DEFAULT_EDITORIAL_INSTRUCTION_ID
-        }
-        includeGlossaryForNovel={shouldSendGlossary}
-        onToggleIncludeGlossaryForNovel={handleToggleNovelGlossary}
-        onSelectInstruction={async (profileId) => {
-          if (!activeNovel) return;
-          const updatedNovel: NovelProject = {
-            ...activeNovel,
-            instructionProfileId: profileId,
-            updatedAt: Date.now(),
-          };
-          await saveNovel(updatedNovel);
-          setNovels((prev) =>
-            prev.map((n) => (n.id === updatedNovel.id ? updatedNovel : n))
-          );
-        }}
-        onSelectEditorialInstruction={async (editorialId) => {
-          if (!activeNovel) return;
-          const updatedNovel: NovelProject = {
-            ...activeNovel,
-            editorialProfileId: editorialId,
-            updatedAt: Date.now(),
-          };
-          await saveNovel(updatedNovel);
-          setNovels((prev) =>
-            prev.map((n) => (n.id === updatedNovel.id ? updatedNovel : n))
-          );
-        }}
-        onSaveInstruction={async (profile) => {
-          await saveInstructionProfile(profile);
-          setInstructions((prev) => {
-            const exists = prev.some((p) => p.id === profile.id);
-            return exists
-              ? prev.map((p) => (p.id === profile.id ? profile : p))
-              : [...prev, profile];
-          });
-        }}
-        onDeleteInstruction={async (id) => {
-          await deleteInstructionProfile(id);
-          setInstructions((prev) => prev.filter((p) => p.id !== id));
-        }}
-        novelId={activeNovelId}
-        glossary={glossary}
-        onSaveGlossaryBulk={async (entries) => {
-          await saveGlossaryEntriesBulk(entries);
-          const refreshed = await getGlossaryByNovel(activeNovelId);
-          setGlossary(refreshed);
-        }}
-        onDeleteGlossaryItem={async (id) => {
-          await deleteGlossaryEntry(id);
-          setGlossary((prev) => prev.filter((g) => g.id !== id));
-        }}
-        onDeleteGlossaryBulk={async (ids) => {
-          await deleteGlossaryEntriesBulk(ids);
-          const idSet = new Set(ids);
-          setGlossary((prev) => prev.filter((g) => !idSet.has(g.id)));
-        }}
-        onSyncReplaceInTranslatedChapters={async (oldTerm, newTerm) => {
-          const cleanOld = oldTerm.trim();
-          const cleanNew = newTerm.trim();
-          if (!cleanOld || cleanOld === cleanNew) return 0;
-          const escaped = cleanOld.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          const regex = new RegExp(escaped, 'g');
-          const updatedChapters: Chapter[] = [];
-
-          for (const ch of chapters) {
-            if (!ch.translatedContent.trim() && !ch.titleTranslated.trim()) {
-              continue;
+      {isAppearanceModalOpen && (
+        <ReaderAppearanceModal
+          isOpen={isAppearanceModalOpen}
+          onClose={() => setIsAppearanceModalOpen(false)}
+          settings={readerSettings}
+          customFonts={customFonts}
+          onUpdateSettings={(next) => {
+            setReaderSettings(next);
+            saveReaderSettings(next);
+          }}
+          onUploadCustomFont={async (file: File) => {
+            const dataBase64 = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(String(reader.result || ''));
+              reader.onerror = () => reject(reader.error);
+              reader.readAsDataURL(file);
+            });
+            const cleanName =
+              file.name
+                .replace(/\.(ttf|otf|woff2|woff)$/i, '')
+                .replace(/[^a-zA-Z0-9\s\-_]/g, '')
+                .trim() || `CustomFont-${Date.now()}`;
+            const fontRecord: CustomFontRecord = {
+              id: `font-${Date.now()}`,
+              name: cleanName,
+              fileName: file.name,
+              mimeType: file.type || 'font/ttf',
+              dataBase64,
+              createdAt: Date.now(),
+            };
+            try {
+              const fontFace = new FontFace(cleanName, `url(${dataBase64})`);
+              const loaded = await fontFace.load();
+              document.fonts.add(loaded);
+            } catch {
+              // Ignore FontFace registration error if browser already loaded
             }
-            const nextTitle = ch.titleTranslated.replace(regex, cleanNew);
-            const nextBody = ch.translatedContent.replace(regex, cleanNew);
-            if (
-              nextTitle !== ch.titleTranslated ||
-              nextBody !== ch.translatedContent
-            ) {
-              const updatedCh: Chapter = {
-                ...ch,
-                titleTranslated: nextTitle,
-                translatedContent: nextBody,
-                updatedAt: Date.now(),
-              };
-              updatedCh.qaReport = scanChapterQA(
-                updatedCh,
-                modelConfig.customBannedWords,
-                modelConfig.qaRules || DEFAULT_QA_VALIDATION_RULES
-              );
-              updatedChapters.push(updatedCh);
-            }
-          }
+            await saveCustomFont(fontRecord);
+            setCustomFonts((prev) => [...prev, fontRecord]);
+            const nextSettings: ReaderSettings = {
+              ...readerSettings,
+              fontFamily: `"${cleanName}", serif`,
+            };
+            setReaderSettings(nextSettings);
+            saveReaderSettings(nextSettings);
+          }}
+          onDeleteCustomFont={async (fontId) => {
+            await deleteCustomFont(fontId);
+            setCustomFonts((prev) => prev.filter((f) => f.id !== fontId));
+          }}
+        />
+      )}
 
-          if (updatedChapters.length > 0) {
-            await saveChaptersBulk(updatedChapters);
-            const map = new Map(updatedChapters.map((u) => [u.id, u]));
+      {isInstructionsModalOpen && (
+        <InstructionsGlossaryModal
+          isOpen={isInstructionsModalOpen}
+          onClose={() => setIsInstructionsModalOpen(false)}
+          initialTab={instructionsModalTab}
+          instructions={instructions}
+          activeInstructionId={
+            activeNovel?.instructionProfileId || DEFAULT_INSTRUCTION_ID
+          }
+          activeEditorialId={
+            activeNovel?.editorialProfileId || DEFAULT_EDITORIAL_INSTRUCTION_ID
+          }
+          includeGlossaryForNovel={shouldSendGlossary}
+          onToggleIncludeGlossaryForNovel={handleToggleNovelGlossary}
+          onSelectInstruction={async (profileId) => {
+            if (!activeNovel) return;
+            const updatedNovel: NovelProject = {
+              ...activeNovel,
+              instructionProfileId: profileId,
+              updatedAt: Date.now(),
+            };
+            await saveNovel(updatedNovel);
+            setNovels((prev) =>
+              prev.map((n) => (n.id === updatedNovel.id ? updatedNovel : n))
+            );
+          }}
+          onSelectEditorialInstruction={async (editorialId) => {
+            if (!activeNovel) return;
+            const updatedNovel: NovelProject = {
+              ...activeNovel,
+              editorialProfileId: editorialId,
+              updatedAt: Date.now(),
+            };
+            await saveNovel(updatedNovel);
+            setNovels((prev) =>
+              prev.map((n) => (n.id === updatedNovel.id ? updatedNovel : n))
+            );
+          }}
+          onSaveInstruction={async (profile) => {
+            await saveInstructionProfile(profile);
+            setInstructions((prev) => {
+              const exists = prev.some((p) => p.id === profile.id);
+              return exists
+                ? prev.map((p) => (p.id === profile.id ? profile : p))
+                : [...prev, profile];
+            });
+          }}
+          onDeleteInstruction={async (id) => {
+            await deleteInstructionProfile(id);
+            setInstructions((prev) => prev.filter((p) => p.id !== id));
+          }}
+          novelId={activeNovelId}
+          glossary={glossary}
+          onSaveGlossaryBulk={async (entries) => {
+            await saveGlossaryEntriesBulk(entries);
+            const refreshed = await getGlossaryByNovel(activeNovelId);
+            setGlossary(refreshed);
+          }}
+          onDeleteGlossaryItem={async (id) => {
+            await deleteGlossaryEntry(id);
+            setGlossary((prev) => prev.filter((g) => g.id !== id));
+          }}
+          onDeleteGlossaryBulk={async (ids) => {
+            await deleteGlossaryEntriesBulk(ids);
+            const idSet = new Set(ids);
+            setGlossary((prev) => prev.filter((g) => !idSet.has(g.id)));
+          }}
+          onSyncReplaceInTranslatedChapters={async (oldTerm, newTerm) => {
+            const cleanOld = oldTerm.trim();
+            const cleanNew = newTerm.trim();
+            if (!cleanOld || cleanOld === cleanNew) return 0;
+            const escaped = cleanOld.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regex = new RegExp(escaped, 'g');
+            const updatedChapters: Chapter[] = [];
+
+            for (const ch of chapters) {
+              if (!ch.translatedContent.trim() && !ch.titleTranslated.trim()) {
+                continue;
+              }
+              const nextTitle = ch.titleTranslated.replace(regex, cleanNew);
+              const nextBody = ch.translatedContent.replace(regex, cleanNew);
+              if (
+                nextTitle !== ch.titleTranslated ||
+                nextBody !== ch.translatedContent
+              ) {
+                const updatedCh: Chapter = {
+                  ...ch,
+                  titleTranslated: nextTitle,
+                  translatedContent: nextBody,
+                  updatedAt: Date.now(),
+                };
+                updatedCh.qaReport = scanChapterQA(
+                  updatedCh,
+                  modelConfig.customBannedWords,
+                  modelConfig.qaRules || DEFAULT_QA_VALIDATION_RULES
+                );
+                updatedChapters.push(updatedCh);
+              }
+            }
+
+            if (updatedChapters.length > 0) {
+              await saveChaptersBulk(updatedChapters);
+              const map = new Map(updatedChapters.map((u) => [u.id, u]));
+              setChapters((prev) => prev.map((c) => map.get(c.id) || c));
+              if (activeChapterId && map.has(activeChapterId)) {
+                const cur = map.get(activeChapterId)!;
+                setEditorTitle(cur.titleTranslated);
+                setEditorContent(cur.translatedContent);
+              }
+            }
+            return updatedChapters.length;
+          }}
+          chapters={chapters}
+          selectedChapterIds={selectedChapterIds}
+          activeChapter={activeChapter}
+          modelConfig={modelConfig}
+          onChangeModelConfig={(next) => {
+            setModelConfig(next);
+            saveModelConfig(next);
+          }}
+          onOpenTerminal={() => setIsTerminalOpen(true)}
+        />
+      )}
+
+      {isSearchReplaceModalOpen && (
+        <FullTextSearchReplaceModal
+          isOpen={isSearchReplaceModalOpen}
+          onClose={() => setIsSearchReplaceModalOpen(false)}
+          chapters={chapters}
+          selectedChapterIds={selectedChapterIds}
+          activeChapterId={activeChapterId}
+          customBannedWords={modelConfig.customBannedWords}
+          qaRules={modelConfig.qaRules || DEFAULT_QA_VALIDATION_RULES}
+          glossary={activeNovel?.includeGlossary ? glossary : undefined}
+          onJumpToChapter={(chId) => setActiveChapterId(chId)}
+          onSelectMatchingChapters={(ids) => {
+            setSelectedChapterIds(new Set(ids));
+            showToast(`Đã tick chọn ${ids.length} chương khớp từ khóa!`);
+          }}
+          onUpdateChaptersBulk={async (updatedList) => {
+            await saveChaptersBulk(updatedList);
+            const map = new Map(updatedList.map((u) => [u.id, u]));
             setChapters((prev) => prev.map((c) => map.get(c.id) || c));
             if (activeChapterId && map.has(activeChapterId)) {
               const cur = map.get(activeChapterId)!;
               setEditorTitle(cur.titleTranslated);
               setEditorContent(cur.translatedContent);
             }
-          }
-          return updatedChapters.length;
-        }}
-        chapters={chapters}
-        selectedChapterIds={selectedChapterIds}
-        activeChapter={activeChapter}
-        modelConfig={modelConfig}
-        onChangeModelConfig={(next) => {
-          setModelConfig(next);
-          saveModelConfig(next);
-        }}
-        onOpenTerminal={() => setIsTerminalOpen(true)}
-      />
+          }}
+        />
+      )}
 
-      <FullTextSearchReplaceModal
-        isOpen={isSearchReplaceModalOpen}
-        onClose={() => setIsSearchReplaceModalOpen(false)}
-        chapters={chapters}
-        selectedChapterIds={selectedChapterIds}
-        activeChapterId={activeChapterId}
-        customBannedWords={modelConfig.customBannedWords}
-        qaRules={modelConfig.qaRules || DEFAULT_QA_VALIDATION_RULES}
-        glossary={activeNovel?.includeGlossary ? glossary : undefined}
-        onJumpToChapter={(chId) => setActiveChapterId(chId)}
-        onSelectMatchingChapters={(ids) => {
-          setSelectedChapterIds(new Set(ids));
-          showToast(`Đã tick chọn ${ids.length} chương khớp từ khóa!`);
-        }}
-        onUpdateChaptersBulk={async (updatedList) => {
-          await saveChaptersBulk(updatedList);
-          const map = new Map(updatedList.map((u) => [u.id, u]));
-          setChapters((prev) => prev.map((c) => map.get(c.id) || c));
-          if (activeChapterId && map.has(activeChapterId)) {
-            const cur = map.get(activeChapterId)!;
-            setEditorTitle(cur.titleTranslated);
-            setEditorContent(cur.translatedContent);
-          }
-        }}
-      />
-
-      {activeNovel && (
+      {activeNovel && isExportModalOpen && (
         <ExportModal
           isOpen={isExportModalOpen}
           onClose={() => setIsExportModalOpen(false)}
@@ -6103,17 +6137,21 @@ export default function MacHuongCacStudioPage() {
       )}
 
       {/* In-App System Terminal & Diagnostic Console */}
-      <SystemTerminalDrawer
-        isOpen={isTerminalOpen}
-        onClose={() => setIsTerminalOpen(false)}
-        onOpen={() => setIsTerminalOpen(true)}
-      />
+      {isTerminalOpen && (
+        <SystemTerminalDrawer
+          isOpen={isTerminalOpen}
+          onClose={() => setIsTerminalOpen(false)}
+          onOpen={() => setIsTerminalOpen(true)}
+        />
+      )}
 
       {/* Interactive User Guide Modal */}
-      <UserGuideModal
-        isOpen={isUserGuideOpen}
-        onClose={() => setIsUserGuideOpen(false)}
-      />
+      {isUserGuideOpen && (
+        <UserGuideModal
+          isOpen={isUserGuideOpen}
+          onClose={() => setIsUserGuideOpen(false)}
+        />
+      )}
     </div>
   );
 }
